@@ -23,11 +23,7 @@ class ImagePreprocessor():
         self.split = split
         trans = [transforms.ToTensor()]
 
-        
-        if args.dataset == "clevr":
-            self.dataset = dset_obj(root=self.args.dataset_path, train=split=='train', transform=transforms.Compose(trans), download=True, downsample=args.downsample)
-        else:
-            self.dataset = dset_obj(root=self.args.dataset_path, train=split=='train', transform=transforms.Compose(trans), download=True)
+        self.dataset = dset_obj(root=self.args.dataset_path, train=split=='train', transform=transforms.Compose(trans), download=True)
         self.n_class = len(self.dataset.classes)
         
         data = self.dataset[0][0]
@@ -37,13 +33,13 @@ class ImagePreprocessor():
         else:
             self.n_inp_channels = data.shape[0]
 
-        self.n_patch_per_dim = int((self.img_sz - self.args.patch_sz) / self.args.stride) + 1
+        self.n_patch_per_dim = self.img_sz - self.args.patch_sz + 1
         self.n_patch_per_img = self.n_patch_per_dim ** 2
         self.input_patch_dim = args.patch_sz ** 2 * self.n_inp_channels
 
         self.whiten_op = None
         self.unwhiten_op = None
-        self.context_sz = args.context_sz[0]
+        self.context_sz = args.context_sz
 
 
         # Increase system limit on number of open files (limit "too many open files" errors during parallelization)
@@ -95,11 +91,6 @@ class ImagePreprocessor():
             assert self.unwhiten_op is not None
             return
         assert self.unwhiten_op is None
-
-        if self.args.zero_whiten_mean:
-            mn = patches.mean(axis=0).unsqueeze(0)
-            print(f"Whitening max/min mean prior to adjustment: {mn.max()} {mn.min()}")
-            patches -= mn
         cov_mx = torch.cov(patches.T)
         cov_mx = torch_force_symmetric(cov_mx)
         tol = self.args.whiten_tol      # NOTE: this is actually a crucial parameter that can swing performance by multiple percentage points
@@ -135,7 +126,7 @@ class ImagePreprocessor():
         conv = torch.nn.Conv2d(in_channels=self.n_inp_channels, 
                                 out_channels=patch_dim, 
                                 kernel_size=(self.args.patch_sz, self.args.patch_sz), 
-                                stride=self.args.stride,
+                                stride=1,
                                 padding=0)
 
         # One filter for each location in the patch (flattens 3 color channels as well)

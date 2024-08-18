@@ -1,11 +1,14 @@
 import sys
 import os
 import shutil
+import argparse
+import torch
+import torchvision
 sys.path.append(os.getcwd())
 sys.path.append(os.path.join(os.getcwd(), 'src'))
 sys.path.append(os.path.join(os.getcwd(), 'src/c'))
 
-from dictionary import get_vis_path
+from dictionary import get_vis_path, generate_sparse_coding_dict
 from preprocessor import ImagePreprocessor
 
 
@@ -25,14 +28,13 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', choices=['cifar10'], help='dataset to use')
-    parser.add_argument('--dataset-path', default="/Users/andrewstange/Desktop/research/sparse-manifold-transform/data", type=str, help='path to dataset (image datasets only)')
+    parser.add_argument('--dataset-path', required=True, type=str, help='path to dataset (image datasets only)')
     parser.add_argument('--samples', default=50000, type=int, help='number of training samples to use. negative for full dataset')
-    parser.add_argument('--wandb', action='store_true', help='use weights and biases')
-
     parser.add_argument('--patch-sz', default=6, type=int, help='image patch size')
-    parser.add_argument('--context-sz', default=32, nargs='+', type=int, help='other patches within this number of pixels is considered a neighbor')
+    parser.add_argument('--context-sz', default=32, type=int, help='other patches within this number of pixels is considered a neighbor')
     parser.add_argument('--whiten_tol', default=1e-3, type=float, help='scaling of identity added before whitening')
-    parser.add_argument('--dict-sz', default=300, nargs='+', type=int, help='sparse coding dictionary size. should be overcomplete, larger than input data dimension by around 10x')
+    parser.add_argument('--dict-sz', default=300, type=int, help='sparse coding dictionary size. should be overcomplete, larger than input data dimension by around 10x')
+
 
     parser.add_argument('--sc_lambda', default=0.03, type=float, help='value of lambda to use in ISTA')
     parser.add_argument('--sc_lr', default=0.1, type=float, help='dictionary update learning rate')
@@ -43,9 +45,10 @@ if __name__ == "__main__":
     parser.add_argument('--sc_ista_tol', default=0.001, type=float, help='dictionary update learning rate')
     parser.add_argument('--sc_mini', default=0, type=int, help='mini-batch size for SGD. 0 to run full-dataset GD')
 
+
     parser.add_argument('--vis-dir', default="", type=str, help='path to store visualizations to')
     parser.add_argument('--vis', action='store_true', help='flag to create visualization')
-
+    parser.add_argument('--wandb', action='store_true', help='use weights and biases')
 
     args = parser.parse_args()
 

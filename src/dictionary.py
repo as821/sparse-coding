@@ -159,7 +159,7 @@ def generate_sparse_coding_dict(args, x, dict_sz, dset):
     z, batch = None, None
     for i in range(args.sc_dict_itr):
         vis_dict = {}
-        assert args.sc_mini > 0:
+        assert args.sc_mini > 0
 
         # use SGD rather than full-dataset GD. select random minibatches
         idxs = list(range(0, x.shape[1]))
@@ -180,8 +180,8 @@ def generate_sparse_coding_dict(args, x, dict_sz, dset):
     return basis.cpu(), None
 
 def dict_vis(args, dset, basis, itr, vis_dict, n_img=400):
-    if args.dict_sz[0] < n_img:
-        n_img = int(np.sqrt(args.dict_sz[0])) ** 2
+    if args.dict_sz < n_img:
+        n_img = int(np.sqrt(args.dict_sz)) ** 2
     nrow = ncol = int(np.ceil(np.sqrt(n_img)))
     chunk_sz = args.patch_sz + 1
     img = np.empty([chunk_sz * nrow - 1, chunk_sz * ncol - 1, 3])
@@ -222,10 +222,7 @@ def dict_vis(args, dset, basis, itr, vis_dict, n_img=400):
         return None
 
 def get_vis_path(args, name):
-    if args.dict_type == "sc":
-        dir = args.vis_dir + f"/d{args.dict_sz[0]}_l{args.sc_lambda}_l{args.sc_lr}_i{args.sc_ista_itr}_it{args.sc_dict_itr}_s{args.samples}_c{args.context_sz[0]}_wt{args.whiten_tol}_dw{int(args.disable_whiten)}"
-    else:
-        dir = args.vis_dir + f"/d{args.dict_sz[0]}_dt{args.dict_thresh[0]}_g{args.gq_thresh[0]}_s{args.samples}_c{args.context_sz[0]}_wt{args.whiten_tol}_dw{int(args.disable_whiten)}"
+    dir = args.vis_dir + f"/d{args.dict_sz}_l{args.sc_lambda}_l{args.sc_lr}_i{args.sc_ista_itr}_it{args.sc_dict_itr}_s{args.samples}_c{args.context_sz}_wt{args.whiten_tol}"
     if not os.path.exists(dir):
         os.mkdir(dir)
     return dir + "/" + name
