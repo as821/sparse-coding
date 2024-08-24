@@ -2,8 +2,8 @@ import numpy as np
 import ctypes
 import os
 
-# from baseline import torch_positive_only
-# import torch
+from baseline import torch_positive_only
+import torch
 
 def fista(x, basis, alpha, n_iter, converge_thresh=0.01):
     assert os.path.exists("src/c/bin/test.so")
@@ -32,11 +32,12 @@ def fista(x, basis, alpha, n_iter, converge_thresh=0.01):
     alpha_L = alpha / L
     L_inv = 1./L
 
-    # expected = torch_positive_only(torch.from_numpy(basis), torch.from_numpy(x.copy()), torch.from_numpy(z.copy()), L_inv, alpha_L).numpy()
+    expected = torch_positive_only(torch.from_numpy(basis), torch.from_numpy(x.copy()), torch.from_numpy(z.copy()), L_inv, alpha_L).numpy()
 
     lib.fista(x, basis, z, x.shape[0], x.shape[1], basis.shape[1], L_inv, alpha_L, n_iter, converge_thresh)
 
-    # diff = np.abs((z - expected))
-    # assert np.all(diff == 0)
+    diff = np.abs((z - expected))
+    assert np.all(diff == 0), "FAILED"
+    print("SUCCESS")
 
 
