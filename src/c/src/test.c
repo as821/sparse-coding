@@ -30,20 +30,11 @@ void fista(float* X, float* basis, float* Z, int inp_dim, int n_samples, int dic
     // basis: inp_dim x dict_sz
     // Z: dict_sz x n_samples
 
-
-    // basis @ z
-    float* reconstruction = (float*) malloc(inp_dim * n_samples * sizeof(float));
-    CHECK(reconstruction);
-    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, inp_dim, n_samples, dict_sz, 1.0f, basis, dict_sz, Z, n_samples, 0.0f, reconstruction, n_samples);
-
     // residual = x - (basis @ z)
     float* residual = (float*) malloc(inp_dim * n_samples * sizeof(float));
     CHECK(residual);
-    for(int idx = 0; idx < inp_dim * n_samples; idx++) {
-        residual[idx] = X[idx] - reconstruction[idx];
-    }
-    free(reconstruction);
-
+    memcpy(residual, X, inp_dim * n_samples * sizeof(float));
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, inp_dim, n_samples, dict_sz, -1.0f, basis, dict_sz, Z, n_samples, 1.0f, residual, n_samples);
 
     // mm = basis.T @ residual
     // z += L_inv * mm
