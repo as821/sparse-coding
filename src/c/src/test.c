@@ -21,18 +21,10 @@ void print_stack_trace();
 }
 
 
-void fista(float* X, float* basis, float* Z, int inp_dim, int n_samples, int dict_sz, float L_inv, float alpha_L, int n_iter, float converge_thresh) {
-    CHECK(X);
-    CHECK(basis);
-    CHECK(Z);
 
-    // X: inp_dim x n_samples
-    // basis: inp_dim x dict_sz
-    // Z: dict_sz x n_samples
 
+void ista_step(float* X, float* basis, float* Z, float* residual, int inp_dim, int n_samples, int dict_sz, float L_inv, float alpha_L) {
     // residual = x - (basis @ z)
-    float* residual = (float*) malloc(inp_dim * n_samples * sizeof(float));
-    CHECK(residual);
     memcpy(residual, X, inp_dim * n_samples * sizeof(float));
     cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, inp_dim, n_samples, dict_sz, -1.0f, basis, dict_sz, Z, n_samples, 1.0f, residual, n_samples);
 
@@ -51,6 +43,27 @@ void fista(float* X, float* basis, float* Z, int inp_dim, int n_samples, int dic
         // https://stackoverflow.com/questions/427477/fastest-way-to-clamp-a-real-fixed-floating-point-value
         Z[idx] = Z[idx] < 0 ? 0 : Z[idx];
     }
+}
+
+void fista(float* X, float* basis, float* Z, int inp_dim, int n_samples, int dict_sz, float L_inv, float alpha_L, int n_iter, float converge_thresh) {
+    CHECK(X);
+    CHECK(basis);
+    CHECK(Z);
+
+    // X: inp_dim x n_samples
+    // basis: inp_dim x dict_sz
+    // Z: dict_sz x n_samples
+
+    float* residual = (float*) malloc(inp_dim * n_samples * sizeof(float));
+    CHECK(residual);
+
+    ista_step(X, basis, Z, residual, inp_dim, n_samples, dict_sz, L_inv, alpha_L);
+
+
+
+
+
+
 }
 
 
