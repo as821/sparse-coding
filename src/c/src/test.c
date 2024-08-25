@@ -32,7 +32,6 @@ void ista_step(float* X, float* basis, float* Z, float* residual, int inp_dim, i
     // z += L_inv * mm
     // NOTE: does not explicitly transpose basis, lets cblas_sgemm to handle it
     cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, dict_sz, n_samples, inp_dim, L_inv, basis, dict_sz, residual, n_samples, 1.0f, Z, n_samples);
-    free(residual);
 
     // z -= mult
     // z = torch.clamp(z, min=0)
@@ -57,12 +56,56 @@ void fista(float* X, float* basis, float* Z, int inp_dim, int n_samples, int dic
     float* residual = (float*) malloc(inp_dim * n_samples * sizeof(float));
     CHECK(residual);
 
-    ista_step(X, basis, Z, residual, inp_dim, n_samples, dict_sz, L_inv, alpha_L);
+    float* z_prev = (float*) malloc(dict_sz * n_samples * sizeof(float));
+    CHECK(z_prev);
+
+    float* Y = (float*) malloc(dict_sz * n_samples * sizeof(float));
+    CHECK(Y);
+    memcpy(Y, Z, dict_sz * n_samples * sizeof(float));
+
+    float* z_diff = (float*) malloc(dict_sz * n_samples * sizeof(float));
+    CHECK(z_diff);
 
 
+    float tk = 1, tk_prev = 1;
+    for(int itr = 0; itr < n_iter; itr++) {
+        memcpy(z_prev, Z, dict_sz * n_samples * sizeof(float));
+        
+        // TODO(as) pass Y in rather than Z
+        ista_step(X, basis, Y, residual, inp_dim, n_samples, dict_sz, L_inv, alpha_L);
+        memcpy(Z, Y, dict_sz * n_samples * sizeof(float));          // TODO(as) can probably skip this except for final iter?
 
+        // tk_prev = tk
+        // tk = (1 + math.sqrt(1 + 4 * tk ** 2)) / 2
+        tk_prev = tk;
+        tk = (1 + sqrtf(1 + 4 * powf(tk, 2))) / 2;
 
+        // z_diff = z_slc - prev_z
+        // y_slc = z_slc + ((tk_prev - 1) / tk) * z_diff
+        float tk_mult = (tk_prev - 1) / tk;
+        for(int idx = 0; idx < dict_sz * n_samples; idx++) {
+            z_diff[idx] = Y[idx] - z_prev[idx];
+            Y[idx] += tk_mult * z_diff[idx];
+        }
 
+        // torch.norm(z_diff) / torch.norm(prev_z) < converge_thresh
+        if(itr != 0) {
+            // Frobenius norm of matrix can be defined as L2 norm of flatttened matrix
+            float diff_norm = cblas_snrm2(dict_sz * n_samples, z_diff, 1);
+            float prev_norm = cblas_snrm2(dict_sz * n_samples, z_prev, 1);
+            if(diff_norm / prev_norm < converge_thresh)
+                break;
+        }
+
+        printf("\33[2K\r%d / %d", itr, n_iter);
+        fflush(stdout);
+    }
+    printf("\n");
+
+    free(residual);
+    free(z_prev);
+    free(Y);
+    free(z_diff);
 
 }
 
