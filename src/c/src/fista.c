@@ -4,6 +4,7 @@
 #include <string.h>
 #include <errno.h>
 #include <execinfo.h>
+#include <sys/time.h>
 
 #include <math.h>
 #include <cblas.h>
@@ -22,10 +23,17 @@ void print_stack_trace();
 
 
 
+void log_time_diff(char* msg, struct timeval* start, struct timeval* stop) {
+    double start_ms = (((double)start->tv_sec)*1000)+(((double)start->tv_usec)/1000);
+    double stop_ms = (((double)stop->tv_sec)*1000)+(((double)stop->tv_usec)/1000);
+    double diff_in_sec = (stop_ms - start_ms)/1000;
+
+    printf("%s: %f\n", msg, diff_in_sec);
+}
 
 void ista_step(float* X, float* basis, float* Z, float* residual, int inp_dim, int n_samples, int dict_sz, float L_inv, float alpha_L) {
     // residual = x - (basis @ z)
-    memcpy(residual, X, inp_dim * n_samples * sizeof(float));
+    memcpy(residual, X, inp_dim * n_samples * sizeof(float));    
     cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, inp_dim, n_samples, dict_sz, -1.0f, basis, dict_sz, Z, n_samples, 1.0f, residual, n_samples);
 
     // mm = basis.T @ residual
@@ -69,11 +77,17 @@ void fista(float* X, float* basis, float* Z, int inp_dim, int n_samples, int dic
 
     float tk = 1, tk_prev = 1;
     for(int itr = 0; itr < n_iter; itr++) {
+
+        struct timeval start, ista, y_update, conv;
+        gettimeofday(&start, NULL);
+
         memcpy(z_prev, Z, dict_sz * n_samples * sizeof(float));
         
         // TODO(as) pass Y in rather than Z
         ista_step(X, basis, Y, residual, inp_dim, n_samples, dict_sz, L_inv, alpha_L);
         memcpy(Z, Y, dict_sz * n_samples * sizeof(float));          // TODO(as) can probably skip this except for final iter?
+        gettimeofday(&ista, NULL);
+
 
         // tk_prev = tk
         // tk = (1 + math.sqrt(1 + 4 * tk ** 2)) / 2
@@ -88,6 +102,8 @@ void fista(float* X, float* basis, float* Z, int inp_dim, int n_samples, int dic
             Y[idx] += tk_mult * z_diff[idx];
         }
 
+        gettimeofday(&y_update, NULL);
+
         // torch.norm(z_diff) / torch.norm(prev_z) < converge_thresh
         if(itr != 0) {
             // Frobenius norm of matrix can be defined as L2 norm of flatttened matrix
@@ -96,6 +112,14 @@ void fista(float* X, float* basis, float* Z, int inp_dim, int n_samples, int dic
             if(diff_norm / prev_norm < converge_thresh)
                 break;
         }
+
+        gettimeofday(&conv, NULL);
+
+        log_time_diff("\ntotal", &start, &conv);
+        log_time_diff("\tista", &start, &ista);
+        log_time_diff("\tupdate", &ista, &y_update);
+        log_time_diff("\tconv", &y_update, &conv);
+
 
         printf("\33[2K\r%d / %d", itr, n_iter);
         fflush(stdout);
