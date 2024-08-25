@@ -5,8 +5,8 @@ from time import time
 
 
 def fista(x, basis, alpha, n_iter, converge_thresh=0.01):
-    assert os.path.exists("src/c/bin/test.so")
-    lib = ctypes.CDLL("src/c/bin/test.so")
+    assert os.path.exists("src/c/bin/fista.so")
+    lib = ctypes.CDLL("src/c/bin/fista.so")
     lib.fista.argtypes = [
         np.ctypeslib.ndpointer(dtype=np.float32, ndim=2, flags='C_CONTIGUOUS'), 
         np.ctypeslib.ndpointer(dtype=np.float32, ndim=2, flags='C_CONTIGUOUS'), 
