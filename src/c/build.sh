@@ -4,8 +4,8 @@ if [[ "$(uname)" == "Darwin" ]]; then
     OPENBLAS_LIB="/usr/local/opt/openblas/lib"
 elif [[ "$(uname)" == "Linux" ]]; then
     # Linux
-    OPENBLAS_INCLUDE="/usr/include/x86_64-linux-gnu/openblas-pthread"
-    OPENBLAS_LIB="/usr/lib/x86_64-linux-gnu/openblas-pthread/libopenblas.a"
+    OPENBLAS_INCLUDE="/home/astange/OpenBLAS"
+    OPENBLAS_LIB="/home/astange/OpenBLAS/libopenblas_zenp-r0.3.28.dev.a"
 else
     echo "Unsupported operating system"
     exit 1

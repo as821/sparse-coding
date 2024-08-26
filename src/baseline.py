@@ -35,7 +35,7 @@ def FISTA(x, basis, alpha, num_iter, converge_thresh=0.01, batch_sz=256, tqdm_di
 
         tk, tk_prev = 1, 1
         for itr in range(0, num_iter):
-            z_slc = torch_positive_only(basis, x_slc, y_slc, L_inv, mult)
+            z_slc = torch_positive_only(basis, x_slc, y_slc.clone(), L_inv, mult)
 
             tk_prev = tk
             tk = (1 + math.sqrt(1 + 4 * tk ** 2)) / 2

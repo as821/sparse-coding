@@ -33,13 +33,23 @@ void log_time_diff(char* msg, struct timeval* start, struct timeval* stop) {
 
 void ista_step(float* X, float* basis, float* Z, float* residual, int inp_dim, int n_samples, int dict_sz, float L_inv, float alpha_L) {
     // residual = x - (basis @ z)
+
+    struct timeval start, gemm1, gemm2, loop;
+    gettimeofday(&start, NULL);
+
+
     memcpy(residual, X, inp_dim * n_samples * sizeof(float));    
     cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, inp_dim, n_samples, dict_sz, -1.0f, basis, dict_sz, Z, n_samples, 1.0f, residual, n_samples);
+    gettimeofday(&gemm1, NULL);
+
 
     // mm = basis.T @ residual
     // z += L_inv * mm
     // NOTE: does not explicitly transpose basis, lets cblas_sgemm to handle it
     cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, dict_sz, n_samples, inp_dim, L_inv, basis, dict_sz, residual, n_samples, 1.0f, Z, n_samples);
+    gettimeofday(&gemm2, NULL);
+
+
 
     // z -= mult
     // z = torch.clamp(z, min=0)
@@ -50,6 +60,12 @@ void ista_step(float* X, float* basis, float* Z, float* residual, int inp_dim, i
         // https://stackoverflow.com/questions/427477/fastest-way-to-clamp-a-real-fixed-floating-point-value
         Z[idx] = Z[idx] < 0 ? 0 : Z[idx];
     }
+
+    gettimeofday(&loop, NULL);
+
+    log_time_diff("\n\tgemm1", &start, &gemm1);
+    log_time_diff("\tgemm2", &gemm1, &gemm2);
+    log_time_diff("\tloop", &gemm2, &loop);
 }
 
 void fista(float* X, float* basis, float* Z, int inp_dim, int n_samples, int dict_sz, float L_inv, float alpha_L, int n_iter, float converge_thresh) {
@@ -83,7 +99,6 @@ void fista(float* X, float* basis, float* Z, int inp_dim, int n_samples, int dic
 
         memcpy(z_prev, Z, dict_sz * n_samples * sizeof(float));
         
-        // TODO(as) pass Y in rather than Z
         ista_step(X, basis, Y, residual, inp_dim, n_samples, dict_sz, L_inv, alpha_L);
         memcpy(Z, Y, dict_sz * n_samples * sizeof(float));          // TODO(as) can probably skip this except for final iter?
         gettimeofday(&ista, NULL);
@@ -92,7 +107,7 @@ void fista(float* X, float* basis, float* Z, int inp_dim, int n_samples, int dic
         // tk_prev = tk
         // tk = (1 + math.sqrt(1 + 4 * tk ** 2)) / 2
         tk_prev = tk;
-        tk = (1 + sqrtf(1 + 4 * powf(tk, 2))) / 2;
+        tk = (1 + sqrtf(1 + 4 * tk * tk)) / 2;
 
         // z_diff = z_slc - prev_z
         // y_slc = z_slc + ((tk_prev - 1) / tk) * z_diff
