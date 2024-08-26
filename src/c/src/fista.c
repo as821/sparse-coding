@@ -49,16 +49,12 @@ void ista_step(float* X, float* basis, float* Z, float* residual, int inp_dim, i
     cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, dict_sz, n_samples, inp_dim, L_inv, basis, dict_sz, residual, n_samples, 1.0f, Z, n_samples);
     gettimeofday(&gemm2, NULL);
 
-
-
     // z -= mult
     // z = torch.clamp(z, min=0)
-    for(int idx = 0; idx < dict_sz * n_samples; idx++) {
-        Z[idx] -= alpha_L;
-        
+    for(int idx = 0; idx < dict_sz * n_samples; idx++) {        
         // compiler should be able to make this fast
         // https://stackoverflow.com/questions/427477/fastest-way-to-clamp-a-real-fixed-floating-point-value
-        Z[idx] = Z[idx] < 0 ? 0 : Z[idx];
+        Z[idx] = Z[idx] < alpha_L ? 0 : Z[idx] - alpha_L;
     }
 
     gettimeofday(&loop, NULL);
@@ -116,11 +112,10 @@ void fista(float* X, float* basis, float* Z, int inp_dim, int n_samples, int dic
             z_prev[idx] = Y[idx];
         }
         
+        // torch.norm(z_diff) / torch.norm(prev_z) < converge_thresh
         // Frobenius norm can be defined as the L2 norm of the flatttened matrix
         float norm_ratio = diff_norm / prev_z_norm;
         norm_ratio = sqrtf(norm_ratio);         // equivalent to sqrtf(diff_norm) / sqrtf(prev_z_norm)
-
-        // torch.norm(z_diff) / torch.norm(prev_z) < converge_thresh
         if(itr != 0 && norm_ratio < converge_thresh)
             break;
 
