@@ -77,48 +77,54 @@ void fista(float* X, float* basis, float* Z, int inp_dim, int n_samples, int dic
     // basis: inp_dim x dict_sz
     // Z: dict_sz x n_samples
 
-    float* residual = (float*) malloc(inp_dim * n_samples * sizeof(float));
+    size_t alloc_alignment = 32;        // bytes -> 256 bits
+    float* residual = (float*) aligned_alloc(alloc_alignment, inp_dim * n_samples * sizeof(float));
     CHECK(residual);
 
     // allow this to contain random values initially since not used on the first iteration
-    float* z_prev = (float*) malloc(dict_sz * n_samples * sizeof(float));
+    float* z_prev = (float*) aligned_alloc(alloc_alignment, dict_sz * n_samples * sizeof(float));
     CHECK(z_prev);
 
-    float* Y = (float*) malloc(dict_sz * n_samples * sizeof(float));
+    float* Y = (float*) aligned_alloc(alloc_alignment, dict_sz * n_samples * sizeof(float));
     CHECK(Y);
     memcpy(Y, Z, dict_sz * n_samples * sizeof(float));
 
-    float* z_diff = (float*) malloc(dict_sz * n_samples * sizeof(float));
+    float* z_diff = (float*) aligned_alloc(alloc_alignment, dict_sz * n_samples * sizeof(float));
     CHECK(z_diff);
 
 
     float tk = 1, tk_prev = 1;
     for(int itr = 0; itr < n_iter; itr++) {
-
-        struct timeval start, ista, y_update, conv;
+        struct timeval start, ista, y_update, diff;
         gettimeofday(&start, NULL);
         
         ista_step(X, basis, Y, residual, inp_dim, n_samples, dict_sz, L_inv, alpha_L);
         gettimeofday(&ista, NULL);
 
         // z_diff = z_slc - prev_z
+        float diff_norm = 0;
+        float prev_z_norm = 0;
         for(int idx = 0; idx < dict_sz * n_samples; idx++) {
-            z_diff[idx] = Y[idx] - z_prev[idx];
+            float diff = Y[idx] - z_prev[idx];
+
+            // norm of z_diff and z_prev
+            diff_norm += diff * diff;
+            z_diff[idx] = diff;
+            prev_z_norm += z_prev[idx] * z_prev[idx];
+
+            // copy Z value out of Y before it gets updated
+            z_prev[idx] = Y[idx];
         }
+        
+        // Frobenius norm can be defined as the L2 norm of the flatttened matrix
+        float norm_ratio = diff_norm / prev_z_norm;
+        norm_ratio = sqrtf(norm_ratio);         // equivalent to sqrtf(diff_norm) / sqrtf(prev_z_norm)
 
         // torch.norm(z_diff) / torch.norm(prev_z) < converge_thresh
-        if(itr != 0) {
-            // Frobenius norm of matrix can be defined as L2 norm of flatttened matrix
-            float diff_norm = cblas_snrm2(dict_sz * n_samples, z_diff, 1);
-            float prev_norm = cblas_snrm2(dict_sz * n_samples, z_prev, 1);
-            if(diff_norm / prev_norm < converge_thresh)
-                break;
-        }
+        if(itr != 0 && norm_ratio < converge_thresh)
+            break;
 
-        // copy Z value out of Y before it gets updated
-        memcpy(z_prev, Y, dict_sz * n_samples * sizeof(float));
-        
-        gettimeofday(&conv, NULL);
+        gettimeofday(&diff, NULL);
 
         // perform Y update only if another ISTA iter needs to be performed. otherwise, Y will contain the final results that should be copied to the output matrix
         if(itr != n_iter - 1) {
@@ -136,10 +142,10 @@ void fista(float* X, float* basis, float* Z, int inp_dim, int n_samples, int dic
 
         gettimeofday(&y_update, NULL);
 
-        log_time_diff("\ntotal", &start, &conv);
+        log_time_diff("\ntotal", &start, &y_update);
         log_time_diff("\tista", &start, &ista);
-        log_time_diff("\tconv", &ista, &conv);
-        log_time_diff("\tupdate", &conv, &y_update);
+        log_time_diff("\tdiff", &ista, &diff);
+        log_time_diff("\tupdate", &diff, &y_update);
 
 
         printf("\33[2K\r%d / %d", itr, n_iter);
