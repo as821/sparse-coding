@@ -78,6 +78,17 @@ void ista_step(float* __restrict__ X, float* __restrict__ basis, float* __restri
     log_time_diff("\tloop", &gemm2, &loop);
 }
 
+
+float horizontal_add(__m256 v) {
+    // add the high and low 128 bits
+    __m128 sum128 = _mm_add_ps(_mm256_extractf128_ps(v, 1), _mm256_castps256_ps128(v));
+    
+    // horizontal add the 4 floats in the 128-bit vector
+    sum128 = _mm_hadd_ps(sum128, sum128);
+    sum128 = _mm_hadd_ps(sum128, sum128);
+    return _mm_cvtss_f32(sum128);
+}
+
 void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__ Z, int inp_dim, int n_samples, int dict_sz, float L_inv, float alpha_L, int n_iter, float converge_thresh) {
     CHECK(X);
     CHECK(basis);
@@ -101,6 +112,8 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
     float* z_diff = (float*) aligned_alloc(ALIGNMENT, dict_sz * n_samples * sizeof(float));
     CHECK(z_diff);
 
+    // assumed by vectorization inside this loop
+    CHECK(dict_sz * n_samples % 8 == 0);
 
     float tk = 1, tk_prev = 1;
     for(int itr = 0; itr < n_iter; itr++) {
@@ -110,21 +123,32 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
         ista_step(X, basis, Y, residual, inp_dim, n_samples, dict_sz, L_inv, alpha_L);
         gettimeofday(&ista, NULL);
 
-        // z_diff = z_slc - prev_z
-        float diff_norm = 0;
-        float prev_z_norm = 0;
-        for(int idx = 0; idx < dict_sz * n_samples; idx++) {
-            float diff = Y[idx] - z_prev[idx];
-
-            // norm of z_diff and z_prev
-            diff_norm += diff * diff;
-            z_diff[idx] = diff;
-            prev_z_norm += z_prev[idx] * z_prev[idx];
+        // calculate difference in Z due to this step, calculate norm of the difference and prev. Z, update z_prev 
+        __m256 avx_diff_norm = _mm256_set1_ps(0);
+        __m256 avx_prev_z_norm = _mm256_set1_ps(0);
+        for(int idx = 0; idx < dict_sz * n_samples; idx += 8) {
+            // float diff = Y[idx] - z_prev[idx];
+            __m256 Y_val = _mm256_load_ps(Y + idx);
+            __m256 z_prev_val = _mm256_load_ps(z_prev + idx);
+            __m256 diff = _mm256_sub_ps(Y_val, z_prev_val);
+            
+            // diff_norm += diff * diff;
+            avx_diff_norm = _mm256_fmadd_ps(diff, diff, avx_diff_norm);                    // a * b + c
+            
+            // prev_z_norm += z_prev[idx] * z_prev[idx];
+            avx_prev_z_norm = _mm256_fmadd_ps(z_prev_val, z_prev_val, avx_prev_z_norm);
+            
+            // z_diff[idx] = diff;
+            _mm256_store_ps(z_diff + idx, diff);
 
             // copy Z value out of Y before it gets updated
-            z_prev[idx] = Y[idx];
+            // z_prev[idx] = Y[idx];
+            _mm256_store_ps(z_prev + idx, Y_val);
         }
-        
+
+        float diff_norm = horizontal_add(avx_diff_norm);
+        float prev_z_norm = horizontal_add(avx_prev_z_norm);
+
         // torch.norm(z_diff) / torch.norm(prev_z) < converge_thresh
         // Frobenius norm can be defined as the L2 norm of the flatttened matrix
         float norm_ratio = diff_norm / prev_z_norm;
