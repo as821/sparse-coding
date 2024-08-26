@@ -12,6 +12,8 @@
 
 void print_stack_trace();
 
+#define ALIGNMENT 32            // bytes --> 256 bits
+
 #define CHECK(x)                                                                                    \
 {                                                                                                   \
     if(!(x)) {                                                                                      \
@@ -51,10 +53,11 @@ void ista_step(float* __restrict__ X, float* __restrict__ basis, float* __restri
 
     // z -= mult
     // z = torch.clamp(z, min=0)
+    float* aligned_Z = (float*) __builtin_assume_aligned(Z, ALIGNMENT);
     for(int idx = 0; idx < dict_sz * n_samples; idx++) {        
         // compiler should be able to make this fast
         // https://stackoverflow.com/questions/427477/fastest-way-to-clamp-a-real-fixed-floating-point-value
-        Z[idx] = Z[idx] < alpha_L ? 0 : Z[idx] - alpha_L;
+        aligned_Z[idx] = aligned_Z[idx] < alpha_L ? 0 : aligned_Z[idx] - alpha_L;
     }
 
     gettimeofday(&loop, NULL);
@@ -73,19 +76,18 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
     // basis: inp_dim x dict_sz
     // Z: dict_sz x n_samples
 
-    size_t alloc_alignment = 32;        // bytes -> 256 bits
-    float* residual = (float*) aligned_alloc(alloc_alignment, inp_dim * n_samples * sizeof(float));
+    float* residual = (float*) aligned_alloc(ALIGNMENT, inp_dim * n_samples * sizeof(float));
     CHECK(residual);
 
     // allow this to contain random values initially since not used on the first iteration
-    float* z_prev = (float*) aligned_alloc(alloc_alignment, dict_sz * n_samples * sizeof(float));
+    float* z_prev = (float*) aligned_alloc(ALIGNMENT, dict_sz * n_samples * sizeof(float));
     CHECK(z_prev);
 
-    float* Y = (float*) aligned_alloc(alloc_alignment, dict_sz * n_samples * sizeof(float));
+    float* Y = (float*) aligned_alloc(ALIGNMENT, dict_sz * n_samples * sizeof(float));
     CHECK(Y);
     memcpy(Y, Z, dict_sz * n_samples * sizeof(float));
 
-    float* z_diff = (float*) aligned_alloc(alloc_alignment, dict_sz * n_samples * sizeof(float));
+    float* z_diff = (float*) aligned_alloc(ALIGNMENT, dict_sz * n_samples * sizeof(float));
     CHECK(z_diff);
 
 
