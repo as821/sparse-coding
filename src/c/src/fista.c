@@ -9,6 +9,8 @@
 #include <math.h>
 #include <cblas.h>
 
+#include <immintrin.h>
+
 
 void print_stack_trace();
 
@@ -53,11 +55,20 @@ void ista_step(float* __restrict__ X, float* __restrict__ basis, float* __restri
 
     // z -= mult
     // z = torch.clamp(z, min=0)
+    int step = 8;
+    CHECK(dict_sz * n_samples % step == 0);        // 256 bit registers -> 32 bytes -> 8 floats
     float* aligned_Z = (float*) __builtin_assume_aligned(Z, ALIGNMENT);
-    for(int idx = 0; idx < dict_sz * n_samples; idx++) {        
-        // compiler should be able to make this fast
-        // https://stackoverflow.com/questions/427477/fastest-way-to-clamp-a-real-fixed-floating-point-value
-        aligned_Z[idx] = aligned_Z[idx] < alpha_L ? 0 : aligned_Z[idx] - alpha_L;
+    __m256 zero_vec = _mm256_set1_ps(0);
+    __m256 alpha_L_vec = _mm256_set1_ps(alpha_L);
+    __m256 neg_alpha_L_vec = _mm256_set1_ps(-1 * alpha_L);
+    for(int idx = 0; idx < dict_sz * n_samples; idx += step) {
+        // aligned_Z[idx] = aligned_Z[idx] < alpha_L ? 0 : aligned_Z[idx] - alpha_L;
+        float* ptr = aligned_Z + idx;
+        __m256 cur_val = _mm256_load_ps(ptr);
+        __m256 false_branch_val = _mm256_add_ps(cur_val, neg_alpha_L_vec);
+        __m256 mask = _mm256_cmp_ps(cur_val, alpha_L_vec, _CMP_LE_OS);          // A <= B (ordered, signalling)
+        __m256 result = _mm256_blendv_ps(false_branch_val, zero_vec, mask);      // if mask, then B
+        _mm256_store_ps(ptr, result);
     }
 
     gettimeofday(&loop, NULL);
