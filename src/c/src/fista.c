@@ -80,6 +80,7 @@ void fista(float* X, float* basis, float* Z, int inp_dim, int n_samples, int dic
     float* residual = (float*) malloc(inp_dim * n_samples * sizeof(float));
     CHECK(residual);
 
+    // allow this to contain random values initially since not used on the first iteration
     float* z_prev = (float*) malloc(dict_sz * n_samples * sizeof(float));
     CHECK(z_prev);
 
@@ -96,28 +97,14 @@ void fista(float* X, float* basis, float* Z, int inp_dim, int n_samples, int dic
 
         struct timeval start, ista, y_update, conv;
         gettimeofday(&start, NULL);
-
-        memcpy(z_prev, Z, dict_sz * n_samples * sizeof(float));
         
         ista_step(X, basis, Y, residual, inp_dim, n_samples, dict_sz, L_inv, alpha_L);
-        memcpy(Z, Y, dict_sz * n_samples * sizeof(float));          // TODO(as) can probably skip this except for final iter?
         gettimeofday(&ista, NULL);
 
-
-        // tk_prev = tk
-        // tk = (1 + math.sqrt(1 + 4 * tk ** 2)) / 2
-        tk_prev = tk;
-        tk = (1 + sqrtf(1 + 4 * tk * tk)) / 2;
-
         // z_diff = z_slc - prev_z
-        // y_slc = z_slc + ((tk_prev - 1) / tk) * z_diff
-        float tk_mult = (tk_prev - 1) / tk;
         for(int idx = 0; idx < dict_sz * n_samples; idx++) {
             z_diff[idx] = Y[idx] - z_prev[idx];
-            Y[idx] += tk_mult * z_diff[idx];
         }
-
-        gettimeofday(&y_update, NULL);
 
         // torch.norm(z_diff) / torch.norm(prev_z) < converge_thresh
         if(itr != 0) {
@@ -128,17 +115,39 @@ void fista(float* X, float* basis, float* Z, int inp_dim, int n_samples, int dic
                 break;
         }
 
+        // copy Z value out of Y before it gets updated
+        memcpy(z_prev, Y, dict_sz * n_samples * sizeof(float));
+        
         gettimeofday(&conv, NULL);
+
+        // perform Y update only if another ISTA iter needs to be performed. otherwise, Y will contain the final results that should be copied to the output matrix
+        if(itr != n_iter - 1) {
+            // tk_prev = tk
+            // tk = (1 + math.sqrt(1 + 4 * tk ** 2)) / 2
+            tk_prev = tk;
+            tk = (1 + sqrtf(1 + 4 * tk * tk)) / 2;
+
+            // y_slc = z_slc + ((tk_prev - 1) / tk) * z_diff
+            float tk_mult = (tk_prev - 1) / tk;
+            for(int idx = 0; idx < dict_sz * n_samples; idx++) {
+                Y[idx] += tk_mult * z_diff[idx];
+            }
+        }
+
+        gettimeofday(&y_update, NULL);
 
         log_time_diff("\ntotal", &start, &conv);
         log_time_diff("\tista", &start, &ista);
-        log_time_diff("\tupdate", &ista, &y_update);
-        log_time_diff("\tconv", &y_update, &conv);
+        log_time_diff("\tconv", &ista, &conv);
+        log_time_diff("\tupdate", &conv, &y_update);
 
 
         printf("\33[2K\r%d / %d", itr, n_iter);
         fflush(stdout);
     }
+
+    memcpy(Z, Y, dict_sz * n_samples * sizeof(float));          // TODO(as) can probably skip this except for final iter?
+
     printf("\n");
 
     free(residual);
