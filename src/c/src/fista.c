@@ -31,7 +31,7 @@ void log_time_diff(char* msg, struct timeval* start, struct timeval* stop) {
     printf("%s: %f\n", msg, diff_in_sec);
 }
 
-void ista_step(float* X, float* basis, float* Z, float* residual, int inp_dim, int n_samples, int dict_sz, float L_inv, float alpha_L) {
+void ista_step(float* __restrict__ X, float* __restrict__ basis, float* __restrict__ Z, float* __restrict__ residual, int inp_dim, int n_samples, int dict_sz, float L_inv, float alpha_L) {
     // residual = x - (basis @ z)
 
     struct timeval start, gemm1, gemm2, loop;
@@ -64,7 +64,7 @@ void ista_step(float* X, float* basis, float* Z, float* residual, int inp_dim, i
     log_time_diff("\tloop", &gemm2, &loop);
 }
 
-void fista(float* X, float* basis, float* Z, int inp_dim, int n_samples, int dict_sz, float L_inv, float alpha_L, int n_iter, float converge_thresh) {
+void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__ Z, int inp_dim, int n_samples, int dict_sz, float L_inv, float alpha_L, int n_iter, float converge_thresh) {
     CHECK(X);
     CHECK(basis);
     CHECK(Z);
