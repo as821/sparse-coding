@@ -14,7 +14,7 @@
 
 void print_stack_trace();
 
-#define ALIGNMENT 32            // bytes --> 256 bits
+#define ALIGNMENT 64            // cache line size for Zen 3, greater than 32 bytes required for aligned AVX256 load/store
 
 #define CHECK(x)                                                                                    \
 {                                                                                                   \
@@ -109,19 +109,22 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
     CHECK(Y);
     memcpy(Y, Z, dict_sz * n_samples * sizeof(float));
 
-    float* z_diff = (float*) aligned_alloc(ALIGNMENT, dict_sz * n_samples * sizeof(float));
-    CHECK(z_diff);
-
     // assumed by vectorization inside this loop
     CHECK(dict_sz * n_samples % 8 == 0);
 
     float tk = 1, tk_prev = 1;
     for(int itr = 0; itr < n_iter; itr++) {
-        struct timeval start, ista, y_update, diff;
+        struct timeval start, ista, diff;
         gettimeofday(&start, NULL);
         
         ista_step(X, basis, Y, residual, inp_dim, n_samples, dict_sz, L_inv, alpha_L);
         gettimeofday(&ista, NULL);
+
+        // Y-update multiplier
+        tk_prev = tk;
+        tk = (1 + sqrtf(1 + 4 * tk * tk)) / 2;
+        float mlt = (tk_prev - 1) / tk;
+        __m256 tk_mult = _mm256_set1_ps(mlt);
 
         // calculate difference in Z due to this step, calculate norm of the difference and prev. Z, update z_prev 
         __m256 avx_diff_norm = _mm256_set1_ps(0);
@@ -129,14 +132,11 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
 
         #pragma omp parallel
         {
-            // __m256 avx_diff_norm_local = _mm256_set1_ps(0);
-            // __m256 avx_prev_z_norm_local = _mm256_set1_ps(0);
-
             struct {
                 __m256 avx_diff_norm_local;
                 __m256 avx_prev_z_norm_local;
                 char padding[32];  // Ensure 64-byte alignment
-            } local_data __attribute__((aligned(64))) = {_mm256_set1_ps(0), _mm256_set1_ps(0)};         // TODO(as) check cache line size...
+            } local_data __attribute__((aligned(64))) = {_mm256_set1_ps(0), _mm256_set1_ps(0)};
 
             
             #pragma omp for nowait
@@ -147,24 +147,25 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
                 __m256 z_prev_val1 = _mm256_load_ps(z_prev + idx);
                 __m256 z_prev_val2 = _mm256_load_ps(z_prev + idx + 8);
                 
+                // copy Z value out of Y before it gets updated
+                // non-temporal store, should bypass cache hierarchy since never accessed again
+                _mm256_stream_ps(z_prev + idx, Y_val1);         
+                _mm256_stream_ps(z_prev + idx + 8, Y_val2);
+
                 __m256 diff1 = _mm256_sub_ps(Y_val1, z_prev_val1);
                 __m256 diff2 = _mm256_sub_ps(Y_val2, z_prev_val2);
                 
+                // y_slc = z_slc + ((tk_prev - 1) / tk) * z_diff
+                _mm256_stream_ps(Y + idx, _mm256_fmadd_ps(tk_mult, diff1, Y_val1));       // a * b + c
+                _mm256_stream_ps(Y + idx + 8, _mm256_fmadd_ps(tk_mult, diff2, Y_val2));
+
                 // diff_norm += diff * diff;
-                local_data.avx_diff_norm_local = _mm256_fmadd_ps(diff1, diff1, local_data.avx_diff_norm_local);       // a * b + c
+                local_data.avx_diff_norm_local = _mm256_fmadd_ps(diff1, diff1, local_data.avx_diff_norm_local);
                 local_data.avx_diff_norm_local = _mm256_fmadd_ps(diff2, diff2, local_data.avx_diff_norm_local);
                 
                 // prev_z_norm += z_prev[idx] * z_prev[idx];
                 local_data.avx_prev_z_norm_local = _mm256_fmadd_ps(z_prev_val1, z_prev_val1, local_data.avx_prev_z_norm_local);
                 local_data.avx_prev_z_norm_local = _mm256_fmadd_ps(z_prev_val2, z_prev_val2, local_data.avx_prev_z_norm_local);
-                
-                // copy Z value out of Y before it gets updated
-                // z_prev[idx] = Y[idx];
-                // z_diff[idx] = diff;
-                _mm256_stream_ps(z_prev + idx, Y_val1);         // non-temporal store, should bypass cache hierarchy since never accessed again
-                _mm256_stream_ps(z_prev + idx + 8, Y_val2);     // TODO(as) can we move this into the update loop instead?
-                _mm256_stream_ps(z_diff + idx, diff1);
-                _mm256_stream_ps(z_diff + idx + 8, diff2);
             }
 
             #pragma omp critical
@@ -186,41 +187,22 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
 
         gettimeofday(&diff, NULL);
 
-        // perform Y update only if another ISTA iter needs to be performed. otherwise, Y will contain the final results that should be copied to the output matrix
-        if(itr != n_iter - 1) {
-            // tk_prev = tk
-            // tk = (1 + math.sqrt(1 + 4 * tk ** 2)) / 2
-            tk_prev = tk;
-            tk = (1 + sqrtf(1 + 4 * tk * tk)) / 2;
-
-            // y_slc = z_slc + ((tk_prev - 1) / tk) * z_diff
-            float tk_mult = (tk_prev - 1) / tk;
-            for(int idx = 0; idx < dict_sz * n_samples; idx++) {
-                Y[idx] += tk_mult * z_diff[idx];
-            }
-        }
-
-        gettimeofday(&y_update, NULL);
-
-        log_time_diff("\ntotal", &start, &y_update);
+        log_time_diff("\ntotal", &start, &diff);
         log_time_diff("\tista", &start, &ista);
         log_time_diff("\tdiff", &ista, &diff);
-        log_time_diff("\tupdate", &diff, &y_update);
 
 
         printf("\33[2K\r%d / %d", itr, n_iter);
         fflush(stdout);
     }
 
-    memcpy(Z, Y, dict_sz * n_samples * sizeof(float));          // TODO(as) can probably skip this except for final iter?
+    memcpy(Z, z_prev, dict_sz * n_samples * sizeof(float));
 
     printf("\n");
 
     free(residual);
     free(z_prev);
     free(Y);
-    free(z_diff);
-
 }
 
 
