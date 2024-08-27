@@ -35,17 +35,14 @@ void log_time_diff(char* msg, struct timeval* start, struct timeval* stop) {
     printf("%s: %f\n", msg, diff_in_sec);
 }
 
-void ista_step(float* __restrict__ X, float* __restrict__ basis, float* __restrict__ Z, float* __restrict__ residual, int inp_dim, int n_samples, int dict_sz, float L_inv, float alpha_L) {
+void blas_ista_step(float* __restrict__ X, float* __restrict__ basis, float* __restrict__ Z, float* __restrict__ residual, int inp_dim, int n_samples, int dict_sz, float L_inv, float alpha_L) {
     // residual = x - (basis @ z)
-
-    struct timeval start, gemm1, gemm2, loop;
+    struct timeval start, gemm1, gemm2;
     gettimeofday(&start, NULL);
-
 
     memcpy(residual, X, inp_dim * n_samples * sizeof(float));    
     cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, inp_dim, n_samples, dict_sz, -1.0f, basis, dict_sz, Z, n_samples, 1.0f, residual, n_samples);
     gettimeofday(&gemm1, NULL);
-
 
     // mm = basis.T @ residual
     // z += L_inv * mm
@@ -53,29 +50,8 @@ void ista_step(float* __restrict__ X, float* __restrict__ basis, float* __restri
     cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, dict_sz, n_samples, inp_dim, L_inv, basis, dict_sz, residual, n_samples, 1.0f, Z, n_samples);
     gettimeofday(&gemm2, NULL);
 
-    // z -= mult
-    // z = torch.clamp(z, min=0)
-    int step = 8;
-    CHECK(dict_sz * n_samples % step == 0);        // 256 bit registers -> 32 bytes -> 8 floats
-    float* aligned_Z = (float*) __builtin_assume_aligned(Z, ALIGNMENT);
-    __m256 zero_vec = _mm256_set1_ps(0);
-    __m256 alpha_L_vec = _mm256_set1_ps(alpha_L);
-    __m256 neg_alpha_L_vec = _mm256_set1_ps(-1 * alpha_L);
-    for(int idx = 0; idx < dict_sz * n_samples; idx += step) {
-        // aligned_Z[idx] = aligned_Z[idx] < alpha_L ? 0 : aligned_Z[idx] - alpha_L;
-        float* ptr = aligned_Z + idx;
-        __m256 cur_val = _mm256_load_ps(ptr);
-        __m256 false_branch_val = _mm256_add_ps(cur_val, neg_alpha_L_vec);
-        __m256 mask = _mm256_cmp_ps(cur_val, alpha_L_vec, _CMP_LE_OS);          // A <= B (ordered, signalling)
-        __m256 result = _mm256_blendv_ps(false_branch_val, zero_vec, mask);      // if mask, then B
-        _mm256_store_ps(ptr, result);
-    }
-
-    gettimeofday(&loop, NULL);
-
     log_time_diff("\n\tgemm1", &start, &gemm1);
     log_time_diff("\tgemm2", &gemm1, &gemm2);
-    log_time_diff("\tloop", &gemm2, &loop);
 }
 
 
@@ -117,8 +93,12 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
         struct timeval start, ista, diff;
         gettimeofday(&start, NULL);
         
-        ista_step(X, basis, Y, residual, inp_dim, n_samples, dict_sz, L_inv, alpha_L);
+        blas_ista_step(X, basis, Y, residual, inp_dim, n_samples, dict_sz, L_inv, alpha_L);
         gettimeofday(&ista, NULL);
+
+        // thresholding
+        __m256 zero_vec = _mm256_set1_ps(0);
+        __m256 alpha_L_vec = _mm256_set1_ps(alpha_L);
 
         // Y-update multiplier
         tk_prev = tk;
@@ -141,19 +121,30 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
             
             #pragma omp for nowait
             for(int idx = 0; idx < dict_sz * n_samples; idx += 16) {
+                                
+                // apply thresholding to the BLAS output
+                // Y[idx] = Y[idx] < alpha_L ? 0 : Y[idx] - alpha_L;
+                __m256 blas_res_1 = _mm256_load_ps(Y + idx);
+                __m256 blas_res_2 = _mm256_load_ps(Y + idx + 8);
+
+                __m256 mask_1 = _mm256_cmp_ps(blas_res_1, alpha_L_vec, _CMP_LE_OS);          // A <= B (ordered, signalling)
+                __m256 mask_2 = _mm256_cmp_ps(blas_res_2, alpha_L_vec, _CMP_LE_OS);          // A <= B (ordered, signalling)
+
+                __m256 Y_val1 = _mm256_blendv_ps(_mm256_sub_ps(blas_res_1, alpha_L_vec), zero_vec, mask_1);      // if mask, then B
+                __m256 Y_val2 = _mm256_blendv_ps(_mm256_sub_ps(blas_res_2, alpha_L_vec), zero_vec, mask_2);
+                
+
                 // float diff = Y[idx] - z_prev[idx];
-                __m256 Y_val1 = _mm256_load_ps(Y + idx);
-                __m256 Y_val2 = _mm256_load_ps(Y + idx + 8);
                 __m256 z_prev_val1 = _mm256_load_ps(z_prev + idx);
                 __m256 z_prev_val2 = _mm256_load_ps(z_prev + idx + 8);
+                __m256 diff1 = _mm256_sub_ps(Y_val1, z_prev_val1);
+                __m256 diff2 = _mm256_sub_ps(Y_val2, z_prev_val2);
                 
                 // copy Z value out of Y before it gets updated
                 // non-temporal store, should bypass cache hierarchy since never accessed again
                 _mm256_stream_ps(z_prev + idx, Y_val1);         
                 _mm256_stream_ps(z_prev + idx + 8, Y_val2);
 
-                __m256 diff1 = _mm256_sub_ps(Y_val1, z_prev_val1);
-                __m256 diff2 = _mm256_sub_ps(Y_val2, z_prev_val2);
                 
                 // y_slc = z_slc + ((tk_prev - 1) / tk) * z_diff
                 _mm256_stream_ps(Y + idx, _mm256_fmadd_ps(tk_mult, diff1, Y_val1));       // a * b + c
