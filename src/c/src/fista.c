@@ -35,25 +35,6 @@ void log_time_diff(char* msg, struct timeval* start, struct timeval* stop) {
     printf("%s: %f\n", msg, diff_in_sec);
 }
 
-void blas_ista_step(float* __restrict__ X, float* __restrict__ basis, float* __restrict__ Z, float* __restrict__ residual, int inp_dim, int n_samples, int dict_sz, float L_inv, float alpha_L) {
-    // residual = x - (basis @ z)
-    struct timeval start, gemm1, gemm2;
-    gettimeofday(&start, NULL);
-
-    memcpy(residual, X, inp_dim * n_samples * sizeof(float));    
-    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, inp_dim, n_samples, dict_sz, -1.0f, basis, dict_sz, Z, n_samples, 1.0f, residual, n_samples);
-    gettimeofday(&gemm1, NULL);
-
-    // mm = basis.T @ residual
-    // z += L_inv * mm
-    // NOTE: does not explicitly transpose basis, lets cblas_sgemm to handle it
-    cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, dict_sz, n_samples, inp_dim, L_inv, basis, dict_sz, residual, n_samples, 1.0f, Z, n_samples);
-    gettimeofday(&gemm2, NULL);
-
-    log_time_diff("\n\tgemm1", &start, &gemm1);
-    log_time_diff("\tgemm2", &gemm1, &gemm2);
-}
-
 
 float horizontal_add(__m256 v) {
     // add the high and low 128 bits
@@ -90,10 +71,25 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
 
     float tk = 1, tk_prev = 1;
     for(int itr = 0; itr < n_iter; itr++) {
-        struct timeval start, ista, diff;
+        struct timeval start, mcpy, gemm1, gemm2, ista, diff;
         gettimeofday(&start, NULL);
         
-        blas_ista_step(X, basis, Y, residual, inp_dim, n_samples, dict_sz, L_inv, alpha_L);
+        // residual = x - (basis @ z)
+        memcpy(residual, X, inp_dim * n_samples * sizeof(float));    
+        gettimeofday(&mcpy, NULL);
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, inp_dim, n_samples, dict_sz, -1.0f, basis, dict_sz, Y, n_samples, 1.0f, residual, n_samples);
+        gettimeofday(&gemm1, NULL);
+
+        // mm = basis.T @ residual
+        // z += L_inv * mm
+        // NOTE: does not explicitly transpose basis, lets cblas_sgemm to handle it
+        cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, dict_sz, n_samples, inp_dim, L_inv, basis, dict_sz, residual, n_samples, 1.0f, Y, n_samples);
+        gettimeofday(&gemm2, NULL);
+        
+        log_time_diff("\n\tmcpy", &start, &mcpy);
+        log_time_diff("\tgemm1", &mcpy, &gemm1);
+        log_time_diff("\tgemm2", &gemm1, &gemm2);
+
         gettimeofday(&ista, NULL);
 
         // thresholding
