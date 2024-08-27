@@ -129,34 +129,48 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
 
         #pragma omp parallel
         {
-            __m256 avx_diff_norm_local = _mm256_set1_ps(0);
-            __m256 avx_prev_z_norm_local = _mm256_set1_ps(0);
+            // __m256 avx_diff_norm_local = _mm256_set1_ps(0);
+            // __m256 avx_prev_z_norm_local = _mm256_set1_ps(0);
+
+            struct {
+                __m256 avx_diff_norm_local;
+                __m256 avx_prev_z_norm_local;
+                char padding[32];  // Ensure 64-byte alignment
+            } local_data __attribute__((aligned(64))) = {_mm256_set1_ps(0), _mm256_set1_ps(0)};         // TODO(as) check cache line size...
+
             
             #pragma omp for nowait
-            for(int idx = 0; idx < dict_sz * n_samples; idx += 8) {
+            for(int idx = 0; idx < dict_sz * n_samples; idx += 16) {
                 // float diff = Y[idx] - z_prev[idx];
-                __m256 Y_val = _mm256_load_ps(Y + idx);
-                __m256 z_prev_val = _mm256_load_ps(z_prev + idx);
-                __m256 diff = _mm256_sub_ps(Y_val, z_prev_val);
+                __m256 Y_val1 = _mm256_load_ps(Y + idx);
+                __m256 Y_val2 = _mm256_load_ps(Y + idx + 8);
+                __m256 z_prev_val1 = _mm256_load_ps(z_prev + idx);
+                __m256 z_prev_val2 = _mm256_load_ps(z_prev + idx + 8);
+                
+                __m256 diff1 = _mm256_sub_ps(Y_val1, z_prev_val1);
+                __m256 diff2 = _mm256_sub_ps(Y_val2, z_prev_val2);
                 
                 // diff_norm += diff * diff;
-                avx_diff_norm_local = _mm256_fmadd_ps(diff, diff, avx_diff_norm_local);                    // a * b + c
+                local_data.avx_diff_norm_local = _mm256_fmadd_ps(diff1, diff1, local_data.avx_diff_norm_local);       // a * b + c
+                local_data.avx_diff_norm_local = _mm256_fmadd_ps(diff2, diff2, local_data.avx_diff_norm_local);
                 
                 // prev_z_norm += z_prev[idx] * z_prev[idx];
-                avx_prev_z_norm_local = _mm256_fmadd_ps(z_prev_val, z_prev_val, avx_prev_z_norm_local);
+                local_data.avx_prev_z_norm_local = _mm256_fmadd_ps(z_prev_val1, z_prev_val1, local_data.avx_prev_z_norm_local);
+                local_data.avx_prev_z_norm_local = _mm256_fmadd_ps(z_prev_val2, z_prev_val2, local_data.avx_prev_z_norm_local);
                 
-                // z_diff[idx] = diff;
-                _mm256_store_ps(z_diff + idx, diff);
-
                 // copy Z value out of Y before it gets updated
                 // z_prev[idx] = Y[idx];
-                _mm256_store_ps(z_prev + idx, Y_val);
+                // z_diff[idx] = diff;
+                _mm256_stream_ps(z_prev + idx, Y_val1);         // non-temporal store, should bypass cache hierarchy since never accessed again
+                _mm256_stream_ps(z_prev + idx + 8, Y_val2);     // TODO(as) can we move this into the update loop instead?
+                _mm256_stream_ps(z_diff + idx, diff1);
+                _mm256_stream_ps(z_diff + idx + 8, diff2);
             }
 
             #pragma omp critical
             {
-                avx_diff_norm = _mm256_add_ps(avx_diff_norm, avx_diff_norm_local);
-                avx_prev_z_norm = _mm256_add_ps(avx_prev_z_norm, avx_prev_z_norm_local);                
+                avx_diff_norm = _mm256_add_ps(avx_diff_norm, local_data.avx_diff_norm_local);
+                avx_prev_z_norm = _mm256_add_ps(avx_prev_z_norm, local_data.avx_prev_z_norm_local);                
             }
         }
 
