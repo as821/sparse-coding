@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <execinfo.h>
 #include <sys/time.h>
+#include <stdbool.h>
 
 #include <math.h>
 #include <cblas.h>
@@ -14,7 +15,17 @@
 
 void print_stack_trace();
 
+// 5950x
+//  - 3.4 base (4.9 boost)
+//  - L1d: 512K (32k / core)
+//  - L2: 8 MB (512K / core)
+//  - L3: 64 MB
+
+
 #define ALIGNMENT 64            // cache line size for Zen 3, greater than 32 bytes required for aligned AVX256 load/store
+
+#define SPARSITY_DEBUG false
+
 
 #define CHECK(x)                                                                                    \
 {                                                                                                   \
@@ -33,6 +44,19 @@ void log_time_diff(char* msg, struct timeval* start, struct timeval* stop) {
     double diff_in_sec = (stop_ms - start_ms)/1000;
 
     printf("%s: %f\n", msg, diff_in_sec);
+}
+
+
+float n_nonzero_elements(float* m, int sz) {
+    if(!SPARSITY_DEBUG)
+        return -1;
+
+    int cnt = 0;
+    for(int idx = 0; idx < sz; idx++) {
+        if(fabs(m[idx]) > 0.00001) 
+            cnt++;
+    }
+    return ((float)cnt) / ((float)sz);
 }
 
 
@@ -77,13 +101,27 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
         // residual = x - (basis @ z)
         memcpy(residual, X, inp_dim * n_samples * sizeof(float));    
         gettimeofday(&mcpy, NULL);
+
+
+        float x_nz = n_nonzero_elements(residual, inp_dim * n_samples);
+        float basis_nz = n_nonzero_elements(basis, inp_dim * dict_sz);
+        float y_nz_pre = n_nonzero_elements(Y, n_samples * dict_sz);
+
+        // TODO(as) NOTE: Y becomes highly sparse quickly (0.47 -> 0.05). Could be used to significantly speed up this matmul
         cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, inp_dim, n_samples, dict_sz, -1.0f, basis, dict_sz, Y, n_samples, 1.0f, residual, n_samples);
+        float res_nz = n_nonzero_elements(residual, inp_dim * n_samples);
+
         gettimeofday(&gemm1, NULL);
 
         // mm = basis.T @ residual
         // z += L_inv * mm
         // NOTE: does not explicitly transpose basis, lets cblas_sgemm to handle it
         cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, dict_sz, n_samples, inp_dim, L_inv, basis, dict_sz, residual, n_samples, 1.0f, Y, n_samples);
+
+        float y_nz = n_nonzero_elements(Y, n_samples * dict_sz);
+        if(SPARSITY_DEBUG)
+            printf("\n%.2f %.2f %.2f %.2f %.2f\n", x_nz, basis_nz, y_nz_pre, res_nz, y_nz);
+
         gettimeofday(&gemm2, NULL);
         
         log_time_diff("\n\tmcpy", &start, &mcpy);
@@ -116,7 +154,7 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
 
             
             #pragma omp for nowait
-            for(int idx = 0; idx < dict_sz * n_samples; idx += 16) {
+            for(int idx = 0; idx < dict_sz * n_samples; idx += 16) {            // TODO(as) make sure static scheduling == assigning threads a contiguous block...
                                 
                 // apply thresholding to the BLAS output
                 // Y[idx] = Y[idx] < alpha_L ? 0 : Y[idx] - alpha_L;
