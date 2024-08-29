@@ -70,7 +70,6 @@ float horizontal_add(__m256 v) {
 
 
 
-
 void spmm(float* A, float* B_val, int* B_col, int* B_row_ptr, float* C, float alpha, int M, int N, int K) {
     // C = alpha * A @ B + C
     // C: M x N, dense
@@ -81,8 +80,7 @@ void spmm(float* A, float* B_val, int* B_col, int* B_row_ptr, float* C, float al
     //      Values are stored in blocks of 8 (AXV register size) and B_col stores the column of the first entry in the block. Assumes N is a multiple of 8
     CHECK(N % 8 == 0);
 
-
-
+    #pragma omp parallel for shared(A, B_val, B_col, B_row_ptr, C, alpha, M, N, K) default(none) schedule(dynamic)
     for(int idx = 0; idx < M; idx++) {
         for(int kdx = 0; kdx < K; kdx++) {
 
@@ -94,12 +92,9 @@ void spmm(float* A, float* B_val, int* B_col, int* B_row_ptr, float* C, float al
 
             // Process the entire "kdx" row of B
             for(int row_ptr_idx = 0; row_ptr_idx < B_row_ptr[kdx]; row_ptr_idx++) {
-                int col_start_idx = B_col[row_ptr_idx];
-                float* C_ptr = &C[idx * N + col_start_idx];
-
-                __m256 C_block = _mm256_load_ps(C_ptr);
-                __m256 B_block = _mm256_load_ps(&B_val[kdx * N + 8 * row_ptr_idx]);
-                _mm256_store_ps(C_ptr, _mm256_fmadd_ps(A_block, B_block, C_block));        // aligned store, non-temporal store instead??
+                float* C_ptr = &C[idx * N + B_col[row_ptr_idx]];
+                float* B_ptr = &B_val[kdx * N + 8 * row_ptr_idx];
+                _mm256_store_ps(C_ptr, _mm256_fmadd_ps(A_block, _mm256_load_ps(B_ptr), _mm256_load_ps(C_ptr)));
             }
         }
     }
