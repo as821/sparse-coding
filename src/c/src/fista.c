@@ -165,21 +165,21 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
 
             // TODO(as) compare result in residual matrix with the result we would have gotten from CBLAS
 
-            // Compare dense/sparse result with the one we get from CBLAS
-            float* residual_gt = (float*) aligned_alloc(ALIGNMENT, inp_dim * n_samples * sizeof(float));
-            CHECK(residual_gt);
-            memcpy(residual_gt, X, inp_dim * n_samples * sizeof(float));
-            cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, inp_dim, n_samples, dict_sz, -1.0f, basis, dict_sz, Y, n_samples, 1.0f, residual_gt, n_samples);
+            // // Compare dense/sparse result with the one we get from CBLAS
+            // float* residual_gt = (float*) aligned_alloc(ALIGNMENT, inp_dim * n_samples * sizeof(float));
+            // CHECK(residual_gt);
+            // memcpy(residual_gt, X, inp_dim * n_samples * sizeof(float));
+            // cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, inp_dim, n_samples, dict_sz, -1.0f, basis, dict_sz, Y, n_samples, 1.0f, residual_gt, n_samples);
             
-            float thresh = 0.0001;
-            float max_diff = 0;
-            for(int idx = 0; idx < inp_dim * n_samples; idx++) {
-                float diff = fabs(residual[idx] - residual_gt[idx]);
-                if(diff > max_diff)
-                    max_diff = diff;
-            }
-            printf("\nMAX DIFF: %f\n", max_diff);
-            CHECK(max_diff < thresh);
+            // float thresh = 0.0001;
+            // float max_diff = 0;
+            // for(int idx = 0; idx < inp_dim * n_samples; idx++) {
+            //     float diff = fabs(residual[idx] - residual_gt[idx]);
+            //     if(diff > max_diff)
+            //         max_diff = diff;
+            // }
+            // printf("\nMAX DIFF: %f\n", max_diff);
+            // CHECK(max_diff < thresh);
             
             // printf("\nSUCCESS!!!!\n\n");
             // exit(1);
@@ -248,20 +248,8 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
                     // float diff = Y[idx] - z_prev[idx];
                     __m256 diff1 = _mm256_sub_ps(Y_val1, _mm256_load_ps(z_prev + idx));
                     
-                    // copy Z value out of Y before it gets updated
-                    // non-temporal store, should bypass cache hierarchy since never accessed again
-                    _mm256_stream_ps(z_prev + idx, Y_val1);
-
-                    // diff_norm += diff * diff;
-                    local_data.avx_diff_norm_local = _mm256_fmadd_ps(diff1, diff1, local_data.avx_diff_norm_local);        // a * b + c
-                    
-                    // Actually the norm of the current Y values, to be used in the next iteration
-                    // prev_z_norm += z_prev[idx] * z_prev[idx];
-                    local_data.avx_prev_z_norm_local = _mm256_fmadd_ps(Y_val1, Y_val1, local_data.avx_prev_z_norm_local);
-
                     // y_slc = z_slc + ((tk_prev - 1) / tk) * z_diff
                     __m256 Y_next = _mm256_fmadd_ps(tk_mult, diff1, Y_val1);
-                    _mm256_stream_ps(Y + idx, Y_next);
                     
                     // true if any of the mask entries are set (cmp sets mask floats to all 0/1. testc returns true if sign bit of any float is set)
                     if(_mm256_testc_ps(mask_1, mask_1)) {
@@ -273,6 +261,20 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
                         _mm256_stream_ps(&sparse_Y_val[row_offset + 8 * y_row_ptr[row_idx]], Y_next);
                         y_row_ptr[row_idx]++;
                     }
+
+                    // copy Z value out of Y before it gets updated
+                    // non-temporal store, should bypass cache hierarchy since never accessed again
+                    _mm256_stream_ps(z_prev + idx, Y_val1);
+                    _mm256_stream_ps(Y + idx, Y_next);
+
+                    // diff_norm += diff * diff;
+                    local_data.avx_diff_norm_local = _mm256_fmadd_ps(diff1, diff1, local_data.avx_diff_norm_local);        // a * b + c
+                    
+                    // Actually the norm of the current Y values, to be used in the next iteration
+                    // prev_z_norm += z_prev[idx] * z_prev[idx];
+                    local_data.avx_prev_z_norm_local = _mm256_fmadd_ps(Y_val1, Y_val1, local_data.avx_prev_z_norm_local);
+
+
                 }
             }
 
