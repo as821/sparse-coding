@@ -80,21 +80,30 @@ void spmm(float* A, float* B_val, int* B_col, int* B_row_ptr, float* C, float al
     //      Values are stored in blocks of 8 (AXV register size) and B_col stores the column of the first entry in the block. Assumes N is a multiple of 8
     CHECK(N % 8 == 0);
 
-    #pragma omp parallel for shared(A, B_val, B_col, B_row_ptr, C, alpha, M, N, K) default(none) schedule(dynamic)
-    for(int idx = 0; idx < M; idx++) {
-        for(int kdx = 0; kdx < K; kdx++) {
+    int inner_tile_sz = 1;
+    int row_thread_tile_sz = 4;
 
-            // for(int jdx = 0; jdx < N; jdx++) {
-            //     C[idx * N + jdx] += alpha * A[idx * K + kdx] * B_val[kdx * N + jdx];
-            // }
+    #pragma omp parallel for shared(A, B_val, B_col, B_row_ptr, C, alpha, M, N, K, inner_tile_sz, row_thread_tile_sz) default(none)
+    for(int row_thread_tile = 0; row_thread_tile < M; row_thread_tile += row_thread_tile_sz) {
+        int row_thread_tile_end = row_thread_tile + row_thread_tile_sz < M ? row_thread_tile + row_thread_tile_sz : M;
+        for(int inner_tile = 0; inner_tile < K; inner_tile += inner_tile_sz) {          // TODO(as) tune tile size + try tiling on row/col dimensions to reduce the size of the working set
+            for(int idx = row_thread_tile; idx < row_thread_tile_end; idx++) {
+                int inner_tile_end = inner_tile + inner_tile_sz < K ? inner_tile + inner_tile_sz : K;
+                for(int kdx = inner_tile; kdx < inner_tile_end; kdx++) {
 
-            __m256 A_block = _mm256_set1_ps(alpha * A[idx * K + kdx]);
+                    // for(int jdx = 0; jdx < N; jdx++) {
+                    //     C[idx * N + jdx] += alpha * A[idx * K + kdx] * B_val[kdx * N + jdx];
+                    // }
 
-            // Process the entire "kdx" row of B
-            for(int row_ptr_idx = 0; row_ptr_idx < B_row_ptr[kdx]; row_ptr_idx++) {
-                float* C_ptr = &C[idx * N + B_col[row_ptr_idx]];
-                float* B_ptr = &B_val[kdx * N + 8 * row_ptr_idx];
-                _mm256_store_ps(C_ptr, _mm256_fmadd_ps(A_block, _mm256_load_ps(B_ptr), _mm256_load_ps(C_ptr)));
+                    __m256 A_block = _mm256_set1_ps(alpha * A[idx * K + kdx]);
+
+                    // Process the entire "kdx" row of B
+                    for(int row_ptr_idx = 0; row_ptr_idx < B_row_ptr[kdx]; row_ptr_idx++) {
+                        float* C_ptr = &C[idx * N + B_col[row_ptr_idx]];
+                        float* B_ptr = &B_val[kdx * N + 8 * row_ptr_idx];
+                        _mm256_store_ps(C_ptr, _mm256_fmadd_ps(A_block, _mm256_load_ps(B_ptr), _mm256_load_ps(C_ptr)));
+                    }
+                }
             }
         }
     }
