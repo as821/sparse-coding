@@ -217,69 +217,48 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
         // calculate difference in Z due to this step, calculate norm of the difference and prev. Z, update z_prev 
         __m256 avx_diff_norm = _mm256_set1_ps(0);
         __m256 avx_prev_z_norm = _mm256_set1_ps(0);
+        for(int row_idx = 0; row_idx < dict_sz; row_idx++) {             // TODO(as) make sure static scheduling == assigning threads a contiguous block...
+            y_row_ptr[row_idx] = 0;
+            int row_offset = row_idx * n_samples;
+            for(int col_idx = 0; col_idx < n_samples; col_idx += 8) {
+                int idx = row_offset + col_idx;
 
-        #pragma omp parallel
-        {
-            struct {
-                __m256 avx_diff_norm_local;
-                __m256 avx_prev_z_norm_local;
-                char padding[32];  // Ensure 64-byte alignment
-            } local_data __attribute__((aligned(64))) = {_mm256_set1_ps(0), _mm256_set1_ps(0)};
+                // apply thresholding to the BLAS output
+                // Y[idx] = Y[idx] < alpha_L ? 0 : Y[idx] - alpha_L;
+                __m256 blas_res_1 = _mm256_load_ps(Y + idx);
+                __m256 mask_1 = _mm256_cmp_ps(blas_res_1, alpha_L_vec, _CMP_LE_OS);          // A <= B (ordered, signalling)
+                __m256 Y_val1 = _mm256_blendv_ps(_mm256_sub_ps(blas_res_1, alpha_L_vec), zero_vec, mask_1);      // if mask, then B
 
-            
-            #pragma omp for schedule(static) nowait
-            for(int row_idx = 0; row_idx < dict_sz; row_idx++) {             // TODO(as) make sure static scheduling == assigning threads a contiguous block...
-                y_row_ptr[row_idx] = 0;
-                int row_offset = row_idx * n_samples;
-                for(int col_idx = 0; col_idx < n_samples; col_idx += 8) {
-                    int idx = row_offset + col_idx;
-
-                    // apply thresholding to the BLAS output
-                    // Y[idx] = Y[idx] < alpha_L ? 0 : Y[idx] - alpha_L;
-                    __m256 blas_res_1 = _mm256_load_ps(Y + idx);
-                    __m256 mask_1 = _mm256_cmp_ps(blas_res_1, alpha_L_vec, _CMP_LE_OS);          // A <= B (ordered, signalling)
-                    __m256 Y_val1 = _mm256_blendv_ps(_mm256_sub_ps(blas_res_1, alpha_L_vec), zero_vec, mask_1);      // if mask, then B
-
-                    // float diff = Y[idx] - z_prev[idx];
-                    __m256 diff1 = _mm256_sub_ps(Y_val1, _mm256_load_ps(z_prev + idx));
+                // float diff = Y[idx] - z_prev[idx];
+                __m256 diff1 = _mm256_sub_ps(Y_val1, _mm256_load_ps(z_prev + idx));
+                
+                // y_slc = z_slc + ((tk_prev - 1) / tk) * z_diff
+                __m256 Y_next = _mm256_fmadd_ps(tk_mult, diff1, Y_val1);
+                
+                // true if any of the mask entries are set (cmp sets mask floats to all 0/1. testc returns true if sign bit of any float is set)
+                if(_mm256_testc_ps(mask_1, mask_1)) {
+                    // if any entry in the set is NZ, store the entire vector
+                    // row is implicit from location in sparse_Y_col and allows parallel processing of rows
+                    sparse_Y_col[row_offset + y_row_ptr[row_idx]] = col_idx;
                     
-                    // y_slc = z_slc + ((tk_prev - 1) / tk) * z_diff
-                    __m256 Y_next = _mm256_fmadd_ps(tk_mult, diff1, Y_val1);
-                    
-                    // true if any of the mask entries are set (cmp sets mask floats to all 0/1. testc returns true if sign bit of any float is set)
-                    if(_mm256_testc_ps(mask_1, mask_1)) {
-                        // if any entry in the set is NZ, store the entire vector
-                        // row is implicit from location in sparse_Y_col and allows parallel processing of rows
-                        sparse_Y_col[row_offset + y_row_ptr[row_idx]] = col_idx;
-                        
-                        // duplication of Y allows us to use sparse Y for first matmul and then the dense one of the dense increment with the result of the second matmul
-                        _mm256_stream_ps(&sparse_Y_val[row_offset + 8 * y_row_ptr[row_idx]], Y_next);
-                        y_row_ptr[row_idx]++;
-                    }
-
-                    // copy Z value out of Y before it gets updated
-                    // non-temporal store, should bypass cache hierarchy since never accessed again
-                    _mm256_stream_ps(z_prev + idx, Y_val1);
-                    _mm256_stream_ps(Y + idx, Y_next);
-
-                    // diff_norm += diff * diff;
-                    local_data.avx_diff_norm_local = _mm256_fmadd_ps(diff1, diff1, local_data.avx_diff_norm_local);        // a * b + c
-                    
-                    // Actually the norm of the current Y values, to be used in the next iteration
-                    // prev_z_norm += z_prev[idx] * z_prev[idx];
-                    local_data.avx_prev_z_norm_local = _mm256_fmadd_ps(Y_val1, Y_val1, local_data.avx_prev_z_norm_local);
-
-
+                    // duplication of Y allows us to use sparse Y for first matmul and then the dense one of the dense increment with the result of the second matmul
+                    _mm256_stream_ps(&sparse_Y_val[row_offset + 8 * y_row_ptr[row_idx]], Y_next);
+                    y_row_ptr[row_idx]++;
                 }
-            }
 
-            #pragma omp critical
-            {
-                avx_diff_norm = _mm256_add_ps(avx_diff_norm, local_data.avx_diff_norm_local);
-                avx_prev_z_norm = _mm256_add_ps(avx_prev_z_norm, local_data.avx_prev_z_norm_local);                
+                // copy Z value out of Y before it gets updated
+                // non-temporal store, should bypass cache hierarchy since never accessed again
+                _mm256_stream_ps(z_prev + idx, Y_val1);
+                _mm256_stream_ps(Y + idx, Y_next);
+
+                // diff_norm += diff * diff;
+                avx_diff_norm = _mm256_fmadd_ps(diff1, diff1, avx_diff_norm);        // a * b + c
+                
+                // Actually the norm of the current Y values, to be used in the next iteration
+                // prev_z_norm += z_prev[idx] * z_prev[idx];
+                avx_prev_z_norm = _mm256_fmadd_ps(Y_val1, Y_val1, avx_prev_z_norm);
             }
         }
-
         float diff_norm = horizontal_add(avx_diff_norm);
 
         // torch.norm(z_diff) / torch.norm(prev_z) < converge_thresh
