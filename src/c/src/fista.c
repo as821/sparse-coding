@@ -79,21 +79,27 @@ float horizontal_add(__m256 v) {
 }
 
 
+void matrix_transpose(float* src, float* dst, int M, int N) {
+    // Transpose the given M x N matrix. Cache locality will be poor on either src or dst due to the nature of the problem
+    for(int idx = 0; idx < M; idx++) {
+        for(int jdx = 0; jdx < N; jdx++) {
+            dst[jdx * M + idx] = src[idx * N + jdx];
+        }
+    }
+}
 
 
-void spmm(float* A, float* B_val, int* B_col, int* B_row_ptr, float* C, float alpha, int M, int N, int K) {
+void spmm(float* A_T, float* B_val, int* B_col, int* B_row_ptr, float* C, float alpha, int M, int N, int K) {
     // C = alpha * A @ B + C
     // C: M x N, dense
-    // A: M x K, dense
+    // A: M x K, dense  (given as a transposed matrix A^T: K x M for cache reasons)
     // B: K x N, sparse
     //      B_val, B_col are full K x N matrices and corresponding B_row_ptr records how much of each row these matrices consume
     //      Like CSR without the compression to allow for better parallel storage/processing of rows
     //      Values are stored in blocks of 8 (AXV register size) and B_col stores the column of the first entry in the block. Assumes N is a multiple of 8
     CHECK(N % 8 == 0);
 
-    int inner_tile_sz = 1;
     int row_thread_tile_sz = 4;
-
 
     // TODO(as) log level of sparsity... make sure this makes sense + not running on full matrix
     // int cnt = 0;
@@ -104,21 +110,19 @@ void spmm(float* A, float* B_val, int* B_col, int* B_row_ptr, float* C, float al
     // float frac = (float)cnt / max_sz;
     // printf("\nDETECTED: %.4f (%d / %d)\n", frac, cnt, (int)max_sz);
 
-    #pragma omp parallel for shared(A, B_val, B_col, B_row_ptr, C, alpha, M, N, K, inner_tile_sz, row_thread_tile_sz) default(none) schedule(dynamic)
+    #pragma omp parallel for shared(A_T, B_val, B_col, B_row_ptr, C, alpha, M, N, K, row_thread_tile_sz) default(none) schedule(dynamic)
     for(int row_thread_tile = 0; row_thread_tile < M; row_thread_tile += row_thread_tile_sz) {
         int row_thread_tile_end = row_thread_tile + row_thread_tile_sz < M ? row_thread_tile + row_thread_tile_sz : M;
+        
+        // work done by a single thread
         for(int kdx = 0; kdx < K; kdx++) {          // same as tiling with size 1
             for(int idx = row_thread_tile; idx < row_thread_tile_end; idx++) {
-
-                // for(int jdx = 0; jdx < N; jdx++) {
-                //     C[idx * N + jdx] += alpha * A[idx * K + kdx] * B_val[kdx * N + jdx];
-                // }
-
-                __m256 A_block = _mm256_set1_ps(alpha * A[idx * K + kdx]);
+                // A^T used to improve locality of column-major accesses. Advantageous to iterate over M inside of iteratin over K to amortize accesses to B_val and B_col below
+                __m256 A_block = _mm256_set1_ps(alpha * A_T[kdx * M + idx]);
 
                 // Process the entire "kdx" row of B
                 for(int row_ptr_idx = 0; row_ptr_idx < B_row_ptr[kdx]; row_ptr_idx++) {
-                    float* C_ptr = &C[idx * N + B_col[kdx * N + row_ptr_idx]];
+                    float* C_ptr = &C[idx * N + B_col[kdx * N + row_ptr_idx]];      // locality on C likely poor regardless due to B_col jumping around within each row
                     float* B_ptr = &B_val[kdx * N + 8 * row_ptr_idx];
                     _mm256_store_ps(C_ptr, _mm256_fmadd_ps(A_block, _mm256_load_ps(B_ptr), _mm256_load_ps(C_ptr)));
                 }
@@ -160,11 +164,13 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
     memset(sparse_Y_val, 0, dict_sz * n_samples * sizeof(float));       // TODO(as) temp
     memset(sparse_Y_col, 0, dict_sz * n_samples * sizeof(int));       // TODO(as) temp
 
+    // basis matrix tends to be small (relative to any of the per-sample matrices X or Y), so a transpose is worthwhile for cache benefits in spmm
+    float* basis_tranpose = (float*) aligned_alloc(ALIGNMENT, inp_dim * dict_sz * sizeof(float));
+    CHECK(basis_tranpose);
+    matrix_transpose(basis, basis_tranpose, inp_dim, dict_sz);
 
     // assumed by vectorization and sparse Y storage
     CHECK(n_samples % 8 == 0);
-
-    bool sparsity_enable = false;            // TODO(as) sparsity monotonically increases. init to false then set to true once sparsity reaches some threshold
 
     float prev_z_norm = 0;
     float tk = 1, tk_prev = 1;
@@ -189,7 +195,7 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
             // TODO(as) NOTE: Y becomes highly sparse quickly (0.47 -> 0.05). Could be used to significantly speed up this matmul
 
             // dense-sparse -> dense matmul
-            spmm(basis, sparse_Y_val, sparse_Y_col, y_row_ptr, residual, -1.0f, inp_dim, n_samples, dict_sz);
+            spmm(basis_tranpose, sparse_Y_val, sparse_Y_col, y_row_ptr, residual, -1.0f, inp_dim, n_samples, dict_sz);
 
             // TODO(as) compare result in residual matrix with the result we would have gotten from CBLAS
 
