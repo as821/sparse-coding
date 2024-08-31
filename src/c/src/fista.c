@@ -24,7 +24,7 @@ void print_stack_trace();
 
 #define ALIGNMENT 64            // cache line size for Zen 3, greater than 32 bytes required for aligned AVX256 load/store
 
-#define SPARSITY_DEBUG false
+#define SPARSITY_DEBUG true
 
 
 #define CHECK(x)                                                                                    \
@@ -188,9 +188,10 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
         // residual = x - (basis @ z)
         memcpy(residual, X, inp_dim * n_samples * sizeof(float));    
         gettimeofday(&mcpy, NULL);
-        if(itr < 50)
+        if(itr < 50) {
             // Y becomes highly sparse with more iterations. Switch to sparse matmul after initial iterations
             cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, inp_dim, n_samples, dict_sz, -1.0f, basis, dict_sz, Y, n_samples, 1.0f, residual, n_samples);
+        }
         else {
             // TODO(as) NOTE: Y becomes highly sparse quickly (0.47 -> 0.05). Could be used to significantly speed up this matmul
 
@@ -223,19 +224,18 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
 
         gettimeofday(&gemm1, NULL);
 
-
-
         // mm = basis.T @ residual
         // z += L_inv * mm
-        // NOTE: does not explicitly transpose basis, lets cblas_sgemm to handle it
         cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, dict_sz, n_samples, inp_dim, L_inv, basis, dict_sz, residual, n_samples, 1.0f, Y, n_samples);
+
+        gettimeofday(&gemm2, NULL);
+
 
         if(SPARSITY_DEBUG) {
             float y_nz = n_nonzero_elements(Y, n_samples * dict_sz);
             printf("\nsparsity: %.2f %.2f %.2f %.2f %.2f\n", x_nz, basis_nz, y_nz_pre, res_nz, y_nz);
         }
 
-        gettimeofday(&gemm2, NULL);
         
         log_time_diff("\n\tmcpy", &start, &mcpy);
         log_time_diff("\tgemm1", &mcpy, &gemm1);
