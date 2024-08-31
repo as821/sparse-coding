@@ -12,7 +12,7 @@ def main(args):
     x = dset.images.flatten(1, 2).permute((1, 0))
     
     basis = torch.randn((x.shape[0], args.dict_sz))
-    basis = basis / basis.norm(2,0)
+    basis = basis / (basis.norm(2,0) + 1e-10)
 
 
     c_res = fista(x.contiguous().numpy(), basis.numpy(), 0.01, 100)

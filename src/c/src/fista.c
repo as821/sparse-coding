@@ -21,6 +21,12 @@ void print_stack_trace();
 //  - L2: 8 MB (512K / core)
 //  - L3: 64 MB
 
+// https://www.intel.com/content/www/us/en/docs/intrinsics-guide/index.html
+// https://siboehm.com/articles/22/Fast-MMM-on-CPU
+// https://www.agner.org/optimize/optimizing_cpp.pdf
+// https://www.netlib.org/blas/
+// https://www.akkadia.org/drepper/cpumemory.pdf
+
 
 #define ALIGNMENT 64            // cache line size for Zen 3, greater than 32 bytes required for aligned AVX256 load/store
 

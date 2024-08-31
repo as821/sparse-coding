@@ -4,6 +4,9 @@ import os
 from time import time
 
 
+def c_impl_available():
+    return os.path.exists("src/c/bin/fista.so")
+
 def fista(x, basis, alpha, n_iter, converge_thresh=0.01):
     assert os.path.exists("src/c/bin/fista.so")
     lib = ctypes.CDLL("src/c/bin/fista.so")
