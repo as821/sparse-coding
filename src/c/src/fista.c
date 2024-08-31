@@ -24,7 +24,7 @@ void print_stack_trace();
 
 #define ALIGNMENT 64            // cache line size for Zen 3, greater than 32 bytes required for aligned AVX256 load/store
 
-#define SPARSITY_DEBUG true
+#define SPARSITY_DEBUG false
 
 
 #define CHECK(x)                                                                                    \
@@ -57,6 +57,17 @@ float n_nonzero_elements(float* m, int sz) {
 }
 
 
+void print_m256(__m256 vec) {
+    float values[8];
+    _mm256_storeu_ps(values, vec);
+    printf("[ ");
+    for(int i = 0; i < 8; i++) {
+        printf("%f ", values[i]);
+    }
+    printf("]\n");
+}
+
+
 float horizontal_add(__m256 v) {
     // add the high and low 128 bits
     __m128 sum128 = _mm_add_ps(_mm256_extractf128_ps(v, 1), _mm256_castps256_ps128(v));
@@ -85,13 +96,13 @@ void spmm(float* A, float* B_val, int* B_col, int* B_row_ptr, float* C, float al
 
 
     // TODO(as) log level of sparsity... make sure this makes sense + not running on full matrix
-    int cnt = 0;
-    for(int idx = 0; idx < K; idx++) {
-        cnt += B_row_ptr[idx];
-    }
-    float max_sz = N * K / 8;
-    float frac = (float)cnt / max_sz;
-    printf("\nDETECTED: %.4f (%d / %d)\n", frac, cnt, (int)max_sz);
+    // int cnt = 0;
+    // for(int idx = 0; idx < K; idx++) {
+    //     cnt += B_row_ptr[idx];
+    // }
+    // float max_sz = N * K / 8;
+    // float frac = (float)cnt / max_sz;
+    // printf("\nDETECTED: %.4f (%d / %d)\n", frac, cnt, (int)max_sz);
 
 
 
@@ -139,6 +150,7 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
 
     // allow this to contain random values initially since not used on the first iteration
     float* z_prev = (float*) aligned_alloc(ALIGNMENT, dict_sz * n_samples * sizeof(float));
+    memset(z_prev, 0, dict_sz * n_samples * sizeof(float));
     CHECK(z_prev);
 
     float* Y = (float*) aligned_alloc(ALIGNMENT, dict_sz * n_samples * sizeof(float));
@@ -187,30 +199,29 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
             // TODO(as) compare result in residual matrix with the result we would have gotten from CBLAS
 
             // Compare dense/sparse result with the one we get from CBLAS
-            float* residual_gt = (float*) aligned_alloc(ALIGNMENT, inp_dim * n_samples * sizeof(float));
-            CHECK(residual_gt);
-            memcpy(residual_gt, X, inp_dim * n_samples * sizeof(float));
-            cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, inp_dim, n_samples, dict_sz, -1.0f, basis, dict_sz, Y, n_samples, 1.0f, residual_gt, n_samples);
+            // float* residual_gt = (float*) aligned_alloc(ALIGNMENT, inp_dim * n_samples * sizeof(float));
+            // CHECK(residual_gt);
+            // memcpy(residual_gt, X, inp_dim * n_samples * sizeof(float));
+            // cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, inp_dim, n_samples, dict_sz, -1.0f, basis, dict_sz, Y, n_samples, 1.0f, residual_gt, n_samples);
             
-            float thresh = 0.0001;
-            float max_diff = 0;
-            for(int idx = 0; idx < inp_dim * n_samples; idx++) {
-                float diff = fabs(residual[idx] - residual_gt[idx]);
-                if(diff > max_diff)
-                    max_diff = diff;
-            }
-            printf("\nMAX DIFF: %f\n", max_diff);
-            CHECK(max_diff < thresh);
+            // float thresh = 0.0001;
+            // float max_diff = 0;
+            // for(int idx = 0; idx < inp_dim * n_samples; idx++) {
+            //     float diff = fabs(residual[idx] - residual_gt[idx]);
+            //     if(diff > max_diff)
+            //         max_diff = diff;
+            // }
+            // printf("\nMAX DIFF: %f\n", max_diff);
+            // CHECK(max_diff < thresh);
             
-            printf("\nSUCCESS!!!!\n\n");
-            exit(1);
+            // printf("\nSUCCESS!!!!\n\n");
+            // exit(1);
         }
         if(SPARSITY_DEBUG)
             res_nz = n_nonzero_elements(residual, inp_dim * n_samples);
 
         gettimeofday(&gemm1, NULL);
 
-        sparsity_enable = true;
 
 
         // mm = basis.T @ residual
@@ -218,9 +229,12 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
         // NOTE: does not explicitly transpose basis, lets cblas_sgemm to handle it
         cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, dict_sz, n_samples, inp_dim, L_inv, basis, dict_sz, residual, n_samples, 1.0f, Y, n_samples);
 
-        float y_nz = n_nonzero_elements(Y, n_samples * dict_sz);
-        if(SPARSITY_DEBUG)
+        sparsity_enable = true;
+
+        if(SPARSITY_DEBUG) {
+            float y_nz = n_nonzero_elements(Y, n_samples * dict_sz);
             printf("\nsparsity: %.2f %.2f %.2f %.2f %.2f\n", x_nz, basis_nz, y_nz_pre, res_nz, y_nz);
+        }
 
         gettimeofday(&gemm2, NULL);
         
@@ -246,7 +260,7 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
 
         int row_tile_sz = 512;
 
-        #pragma omp parallel num_threads(1)
+        #pragma omp parallel
         {
             struct {
                 __m256 avx_diff_norm_local;
@@ -266,16 +280,16 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
                         // apply thresholding to the BLAS output
                         // Y[idx] = Y[idx] < alpha_L ? 0 : Y[idx] - alpha_L;
                         __m256 blas_res_1 = _mm256_load_ps(Y + idx);
-                        __m256 mask_1 = _mm256_cmp_ps(blas_res_1, alpha_L_vec, _CMP_LE_OS);          // A <= B (ordered, signalling)
-                        __m256 Y_val1 = _mm256_blendv_ps(_mm256_sub_ps(blas_res_1, alpha_L_vec), zero_vec, mask_1);      // if mask, then B
+                        __m256 sub_vec = _mm256_sub_ps(blas_res_1, alpha_L_vec);
+                        __m256 mask_1 = _mm256_cmp_ps(zero_vec, sub_vec, _CMP_LT_OS);       // A < B (ordered, signalling)
+                        __m256 Y_val1 = _mm256_blendv_ps(zero_vec, sub_vec, mask_1);        // if mask, then B
 
                         // float diff = Y[idx] - z_prev[idx];
                         __m256 diff1 = _mm256_sub_ps(Y_val1, _mm256_load_ps(z_prev + idx));
                         
                         // y_slc = z_slc + ((tk_prev - 1) / tk) * z_diff
                         __m256 Y_next = _mm256_fmadd_ps(tk_mult, diff1, Y_val1);
-                        
-                        if(_mm256_movemask_ps(mask_1) != 0) {
+                        if(_mm256_movemask_ps(_mm256_cmp_ps(Y_next, zero_vec, _CMP_NEQ_OS)) != 0) {
                             // if any entry in the set is NZ, store the entire vector
                             // row is implicit from location in sparse_Y_col and allows parallel processing of rows
                             sparse_Y_col[row_offset + row_ptr] = col_idx;
@@ -283,33 +297,6 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
                             // duplication of Y allows us to use sparse Y for first matmul and then the dense one of the dense increment with the result of the second matmul
                             _mm256_stream_ps(&sparse_Y_val[row_offset + 8 * row_ptr], Y_next);
                             row_ptr++;
-
-                            float sanity[8];
-                            _mm256_store_ps(sanity, mask_1);
-                            // _mm256 test = _mm256_or_ps(mask_1, _mm256_sub_ps(zero_vec, mask_1));
-                            bool invalid = false;
-                            for(int i = 0; i < 8; i++) {invalid &= (sanity[i] == 0);}
-                            if(invalid) {
-                                printf("FP (%d): \n", _mm256_movemask_ps(mask_1));
-                                for(int i = 0; i < 8; i++) {
-                                    printf("\t%f\n", sanity[i]);
-                                }
-                            }
-                            CHECK(!invalid);
-                        }
-                        else {
-                            float sanity[8];
-                            _mm256_store_ps(sanity, mask_1);
-                            // _mm256 test = _mm256_or_ps(mask_1, _mm256_sub_ps(zero_vec, mask_1));
-                            bool invalid = false;
-                            for(int i = 0; i < 8; i++) {invalid |= (sanity[i] != 0);}
-                            if(invalid) {
-                                printf("FN (%d): \n", _mm256_movemask_ps(mask_1));
-                                for(int i = 0; i < 8; i++) {
-                                    printf("\t%f\n", sanity[i]);
-                                }
-                            }
-                            CHECK(!invalid);
                         }
 
                         // copy Z value out of Y before it gets updated
