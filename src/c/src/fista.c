@@ -104,29 +104,23 @@ void spmm(float* A, float* B_val, int* B_col, int* B_row_ptr, float* C, float al
     // float frac = (float)cnt / max_sz;
     // printf("\nDETECTED: %.4f (%d / %d)\n", frac, cnt, (int)max_sz);
 
-
-
-
-    #pragma omp parallel for shared(A, B_val, B_col, B_row_ptr, C, alpha, M, N, K, inner_tile_sz, row_thread_tile_sz) default(none)
+    #pragma omp parallel for shared(A, B_val, B_col, B_row_ptr, C, alpha, M, N, K, inner_tile_sz, row_thread_tile_sz) default(none) schedule(dynamic)
     for(int row_thread_tile = 0; row_thread_tile < M; row_thread_tile += row_thread_tile_sz) {
         int row_thread_tile_end = row_thread_tile + row_thread_tile_sz < M ? row_thread_tile + row_thread_tile_sz : M;
-        for(int inner_tile = 0; inner_tile < K; inner_tile += inner_tile_sz) {          // TODO(as) tune tile size + try tiling on row/col dimensions to reduce the size of the working set
+        for(int kdx = 0; kdx < K; kdx++) {          // same as tiling with size 1
             for(int idx = row_thread_tile; idx < row_thread_tile_end; idx++) {
-                int inner_tile_end = inner_tile + inner_tile_sz < K ? inner_tile + inner_tile_sz : K;
-                for(int kdx = inner_tile; kdx < inner_tile_end; kdx++) {
 
-                    // for(int jdx = 0; jdx < N; jdx++) {
-                    //     C[idx * N + jdx] += alpha * A[idx * K + kdx] * B_val[kdx * N + jdx];
-                    // }
+                // for(int jdx = 0; jdx < N; jdx++) {
+                //     C[idx * N + jdx] += alpha * A[idx * K + kdx] * B_val[kdx * N + jdx];
+                // }
 
-                    __m256 A_block = _mm256_set1_ps(alpha * A[idx * K + kdx]);
+                __m256 A_block = _mm256_set1_ps(alpha * A[idx * K + kdx]);
 
-                    // Process the entire "kdx" row of B
-                    for(int row_ptr_idx = 0; row_ptr_idx < B_row_ptr[kdx]; row_ptr_idx++) {
-                        float* C_ptr = &C[idx * N + B_col[kdx * N + row_ptr_idx]];
-                        float* B_ptr = &B_val[kdx * N + 8 * row_ptr_idx];
-                        _mm256_store_ps(C_ptr, _mm256_fmadd_ps(A_block, _mm256_load_ps(B_ptr), _mm256_load_ps(C_ptr)));
-                    }
+                // Process the entire "kdx" row of B
+                for(int row_ptr_idx = 0; row_ptr_idx < B_row_ptr[kdx]; row_ptr_idx++) {
+                    float* C_ptr = &C[idx * N + B_col[kdx * N + row_ptr_idx]];
+                    float* B_ptr = &B_val[kdx * N + 8 * row_ptr_idx];
+                    _mm256_store_ps(C_ptr, _mm256_fmadd_ps(A_block, _mm256_load_ps(B_ptr), _mm256_load_ps(C_ptr)));
                 }
             }
         }
@@ -188,7 +182,8 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
         // residual = x - (basis @ z)
         memcpy(residual, X, inp_dim * n_samples * sizeof(float));    
         gettimeofday(&mcpy, NULL);
-        if(!sparsity_enable)
+        if(itr < 50)
+            // Y becomes highly sparse with more iterations. Switch to sparse matmul after initial iterations
             cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, inp_dim, n_samples, dict_sz, -1.0f, basis, dict_sz, Y, n_samples, 1.0f, residual, n_samples);
         else {
             // TODO(as) NOTE: Y becomes highly sparse quickly (0.47 -> 0.05). Could be used to significantly speed up this matmul
@@ -228,8 +223,6 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
         // z += L_inv * mm
         // NOTE: does not explicitly transpose basis, lets cblas_sgemm to handle it
         cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, dict_sz, n_samples, inp_dim, L_inv, basis, dict_sz, residual, n_samples, 1.0f, Y, n_samples);
-
-        sparsity_enable = true;
 
         if(SPARSITY_DEBUG) {
             float y_nz = n_nonzero_elements(Y, n_samples * dict_sz);
