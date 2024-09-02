@@ -2,6 +2,12 @@ import argparse
 import torch
 import numpy as np
 
+import sys
+import os
+sys.path.append(os.getcwd())
+sys.path.append(os.path.join(os.getcwd(), 'src'))
+sys.path.append(os.path.join(os.getcwd(), 'src/c'))
+
 from dataset import NatPatchDataset
 from baseline import FISTA
 from cinterface import fista

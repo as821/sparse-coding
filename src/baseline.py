@@ -49,5 +49,6 @@ def FISTA(x, basis, alpha, num_iter, converge_thresh=0.01, batch_sz=256, tqdm_di
         z[:, start:end] = z_slc
 
         max_itr = max(max_itr, itr)
-    print(f"FISTA iters: {max_itr} / {num_iter} in {time() - start_time:.3f}s")
+    if not tqdm_disable:
+        print(f"FISTA iters: {max_itr} / {num_iter} in {time() - start_time:.3f}s")
     return z
