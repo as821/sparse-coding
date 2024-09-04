@@ -70,7 +70,7 @@ def main(args):
             
             x_batch = x[:, batch_start:batch_end]
             if c_impl_available():
-                z = fista(x_batch, basis.numpy(), args.alpha, fista_max_iter)
+                z = fista(x_batch.contiguous(), basis.numpy(), args.alpha, fista_max_iter)
             else:
                 z = FISTA(torch.from_numpy(x_batch), basis, args.alpha, fista_max_iter, tqdm_disable=True).numpy()
 
