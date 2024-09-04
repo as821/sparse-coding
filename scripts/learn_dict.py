@@ -5,6 +5,8 @@ import numpy as np
 import time
 import wandb
 
+import matplotlib.pyplot as plt
+
 import sys
 import os
 sys.path.append(os.getcwd())
@@ -15,6 +17,31 @@ sys.path.append(os.path.join(os.getcwd(), 'src/c'))
 from dataset import NatPatchDataset
 from cinterface import fista, c_impl_available
 from baseline import FISTA
+
+
+def plot_rf(rf, out_dim, M):
+    # rf = rf.reshape(out_dim, -1)
+    # # normalize
+    rf /= rf.abs().max(dim=1, keepdims=True)[0]
+    rf = rf.reshape(out_dim, M, M)
+
+    # plotting
+    n = 10 # int(np.ceil(np.sqrt(rf.shape[0])))
+    fig, axes = plt.subplots(nrows=n, ncols=n, sharex=True, sharey=True)
+    fig.set_size_inches(10, 10)
+    for i in range(n * n):
+        axes.flat[i].imshow(rf[i], cmap='gray', vmin=-1, vmax=1)
+        axes.flat[i].set_xticks([])
+        axes.flat[i].set_yticks([])
+        axes.flat[i].set_aspect('equal')
+    for j in range(rf.shape[0], n * n):
+        ax = axes[j // n][j % n]
+        ax.imshow(np.ones_like(rf[0]) * -1, cmap='gray', vmin=-1, vmax=1)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_aspect('equal')
+    fig.subplots_adjust(wspace=0.0, hspace=0.0)
+    return fig
 
 
 def main(args):
@@ -55,8 +82,11 @@ def main(args):
         print(f"Epoch {ep}: {running_loss}")
         vis_dict["loss"] = running_loss
         if ep % 5 == 0:
-            # TODO(as): visualize dict + save checkpoint
-            pass
+            fig = plot_rf(basis.T.clone(), args.dict_sz, args.patch_sz)
+            if args.wandb:
+                vis_dict["dict"] = wandb.Image(plt)
+            else:
+                plt.show()
 
         if ep % 10 == 0 and args.ckpt_path != "":
             torch.save(basis, args.ckpt_path + f"/{timestamp}/ckpt_{ep}.pt")
@@ -75,7 +105,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--path', default="/Users/andrewstange/Desktop/research/sparse-coding/data/IMAGES.mat", type=str, help="dataset path")
-    parser.add_argument('--ckpt-path', default="/Users/andrewstange/Desktop/research/sparse-coding/ckpts", type=str, help="checkpoint directory")
+    parser.add_argument('--ckpt-path', default="", type=str, help="checkpoint directory")
 
     parser.add_argument('--patch_sz', default=10, type=int, help="patch size")
     parser.add_argument('--nsamples', default=2000, type=int, help="batch size")
