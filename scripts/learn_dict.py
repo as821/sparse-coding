@@ -103,7 +103,7 @@ def main(args):
         if args.wandb:
             wandb.log(vis_dict, step=e)
         if e % 10 == 9 and args.ckpt_path != "":
-            torch.save(basis, args.ckpt_path + f"/{timestamp}/ckpt_{ep}.pt")
+            torch.save(basis, args.ckpt_path + f"/{timestamp}/ckpt_{e}.pt")
     
     if args.ckpt_path != "":
         torch.save(basis, args.ckpt_path + f"/{timestamp}/final.pt")
