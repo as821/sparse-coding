@@ -53,6 +53,9 @@ def main(args):
         assert not os.path.exists(args.ckpt_path + f"/{timestamp}")
         os.mkdir(args.ckpt_path + f"/{timestamp}")
 
+    if args.wandb:
+        wandb.init(config={}, project="smt_sc_dict")
+
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     fista_max_iter = 10000
