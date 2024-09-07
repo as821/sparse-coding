@@ -117,14 +117,14 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
     CHECK(Y);
     memset(Y, 0, dict_sz * n_samples * sizeof(float));
 
-    // assumed by vectorization and sparse Y storage
+    // assumed by vectorization
     CHECK(n_samples % 8 == 0);
 
     float prev_z_norm = 0;
     float tk = 1, tk_prev = 1;
     float x_nz, basis_nz, y_nz_pre, res_nz;
     for(int itr = 0; itr < n_iter; itr++) {
-        struct timeval start, mcpy, gemm1, gemm2, ista, diff;
+        struct timeval start, mcpy, gemm1, gemm2, ista, diff, logging;
         gettimeofday(&start, NULL);
         
         if(SPARSITY_DEBUG) {
@@ -156,13 +156,14 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
             printf("\nsparsity: %.2f %.2f %.2f %.2f %.2f\n", x_nz, basis_nz, y_nz_pre, res_nz, y_nz);
         }
 
+        gettimeofday(&ista, NULL);
         if(DEBUG) {
             log_time_diff("\n\tmcpy", &start, &mcpy);
             log_time_diff("\tgemm1", &mcpy, &gemm1);
             log_time_diff("\tgemm2", &gemm1, &gemm2);
         }
+        gettimeofday(&logging, NULL);
 
-        gettimeofday(&ista, NULL);
 
         // thresholding
         __m256 zero_vec = _mm256_set1_ps(0);
@@ -222,7 +223,8 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
         if(DEBUG) {
             log_time_diff("\ntotal", &start, &diff);
             log_time_diff("\tista", &start, &ista);
-            log_time_diff("\tdiff", &ista, &diff);
+            log_time_diff("\tlogging", &ista, &logging);
+            log_time_diff("\tdiff", &logging, &diff);
         
             printf("\33[2K\r%d / %d", itr, n_iter);
             fflush(stdout);

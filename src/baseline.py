@@ -18,7 +18,7 @@ def FISTA(x, basis, alpha, lr, num_iter, converge_thresh=0.01, device="cpu", bat
     start_time = time()
 
     # L is upper bound on the largest eigenvalue of the basis matrix
-    L = torch.max(torch.linalg.eigvalsh(basis @ basis.T))
+    # L = torch.max(torch.linalg.eigvalsh(basis @ basis.T))
     # mult = alpha / L
     # L_inv = 1./L
     # print(f"{L} {L_inv} {lr}")    
@@ -54,6 +54,6 @@ def FISTA(x, basis, alpha, lr, num_iter, converge_thresh=0.01, device="cpu", bat
         z[:, start:end] = z_slc
 
         max_itr = max(max_itr, itr)
-    if not tqdm_disable:
-        print(f"FISTA iters: {max_itr} / {num_iter} in {time() - start_time:.3f}s")
+    # if not tqdm_disable:
+    print(f"FISTA iters: {max_itr} / {num_iter} in {time() - start_time:.3f}s")
     return z.to(device)

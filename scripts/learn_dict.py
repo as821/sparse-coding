@@ -74,11 +74,11 @@ def main(args):
             with torch.no_grad():            
                 if c_impl_available():
                     assert img_batch.shape[0] % 8 == 0
-                    z_np = fista(np.ascontiguousarray(img_batch.T.numpy()), basis.weight.numpy(), args.reg, fista_max_iter).T
+                    z_np = fista(img_batch.T.contiguous().numpy(), basis.weight.numpy(), args.reg, fista_max_iter).T
+                    z = torch.from_numpy(z_np)
                 else:
-                    z_np = FISTA(img_batch.T, basis.weight, args.reg, args.r_learning_rate, fista_max_iter, 0.01, device).T
+                    z = FISTA(img_batch.T, basis.weight, args.reg, args.r_learning_rate, fista_max_iter, 0.01, device).T
             
-            z = torch.from_numpy(z_np)
             pred = basis(z)
 
             loss = ((img_batch - pred) ** 2).sum()

@@ -5,7 +5,7 @@ from time import time
 
 
 def c_impl_available():
-    return os.path.exists("src/c/bin/fista.so")
+    return os.path.exists("src/c/bin/fista.so") and False
 
 def fista(x, basis, alpha, n_iter, converge_thresh=0.01):
     assert os.path.exists("src/c/bin/fista.so")
@@ -39,6 +39,6 @@ def fista(x, basis, alpha, n_iter, converge_thresh=0.01):
     lib.fista(x, basis, z, x.shape[0], x.shape[1], basis.shape[1], L_inv, alpha_L, n_iter, converge_thresh)
     end = time()
 
-    # print(f"FISTA: {end - start:.3f}s")
+    print(f"FISTA: {end - start:.3f}s")
     return z
 
