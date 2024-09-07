@@ -54,8 +54,11 @@ def main(args):
     dset = NatPatchDataset(args.nsamples, args.patch_sz, args.patch_sz, 4, args.path)
     x = dset.images.flatten(1, 2).permute((1, 0)).contiguous().numpy()
     
-    basis = torch.randn((x.shape[0], args.dict_sz))
-    basis /= (basis.norm(2,0) + 1e-10)
+    basis = torch.randn((x.shape[0], args.dict_sz), requires_grad=True)
+    with torch.no_grad():
+        basis /= (basis.norm(2,0) + 1e-10)
+
+    optim = torch.optim.SGD([{'params': basis, "lr": args.lr}])
 
     fista_max_iter = 10000
 
@@ -67,22 +70,30 @@ def main(args):
         vis_dict = {}
         for batch_start in tqdm(range(0, x.shape[1], args.batch_sz)):
             batch_end = batch_start + args.batch_sz if batch_start + args.batch_sz < x.shape[1] else x.shape[1]
+            x_batch = torch.tensor(x[:, batch_start:batch_end], requires_grad=True)
             
-            x_batch = x[:, batch_start:batch_end]
-            if c_impl_available():
-                z = fista(x_batch.contiguous(), basis.numpy(), args.alpha, fista_max_iter)
-            else:
-                z = FISTA(torch.from_numpy(x_batch), basis, args.alpha, fista_max_iter, tqdm_disable=True).numpy()
+            with torch.no_grad():
+                if c_impl_available():
+                    z_np = fista(x_batch.detach().numpy().contiguous(), basis.detach().numpy(), args.alpha, fista_max_iter)
+                else:
+                    z_np = FISTA(x_batch.detach(), basis.detach(), args.alpha, fista_max_iter, tqdm_disable=True).numpy()            
+            z = torch.tensor(z_np, requires_grad=True)
 
-            residual = x_batch - basis.numpy() @ z
-            running_loss += np.abs(residual).sum()
-            basis += args.lr * (residual @ z.T) 
-            basis /= (torch.linalg.vector_norm(basis, dim=0) + 1e-10)
+            pred = basis @ z
+            loss = ((x_batch - pred)**2).sum()
+            loss.backward()
+            optim.step()
+            optim.zero_grad()
+            with torch.no_grad():
+                basis /= (torch.linalg.vector_norm(basis, dim=0) + 1e-10)
+
+            running_loss += np.abs(loss.detach().numpy()).sum()
+
 
         print(f"Epoch {ep}: {running_loss}")
         vis_dict["loss"] = running_loss
         if ep % 5 == 0:
-            fig = plot_rf(basis.T.clone(), args.dict_sz, args.patch_sz)
+            fig = plot_rf(basis.detach().T, args.dict_sz, args.patch_sz)
             if args.wandb:
                 vis_dict["dict"] = wandb.Image(plt)
             else:
