@@ -26,7 +26,7 @@ def plot_rf(rf, out_dim, M):
     rf = rf.reshape(out_dim, M, M)
 
     # plotting
-    n = 10 # int(np.ceil(np.sqrt(rf.shape[0])))
+    n = int(np.ceil(np.sqrt(rf.shape[0])))
     fig, axes = plt.subplots(nrows=n, ncols=n, sharex=True, sharey=True)
     fig.set_size_inches(10, 10)
     for i in range(n * n):
