@@ -17,9 +17,14 @@ def FISTA(x, basis, alpha, num_iter, converge_thresh=0.01, batch_sz=256, tqdm_di
     start_time = time()
 
     # L is upper bound on the largest eigenvalue of the basis matrix
-    L = torch.max(torch.linalg.eigvalsh(basis @ basis.T))
-    mult = alpha / L
-    L_inv = 1./L
+    # L = torch.max(torch.linalg.eigvalsh(basis @ basis.T))
+    # mult = alpha / L
+    # L_inv = 1./L
+
+    L_inv = 0.01
+    mult = alpha
+
+
 
     z = torch.zeros((basis.shape[1], x.shape[1]), dtype=basis.dtype, device="cpu")
 
