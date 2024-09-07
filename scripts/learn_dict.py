@@ -71,16 +71,13 @@ def main(args):
         c = 0
         for img_batch in tqdm(dataloader, desc='training', total=len(dataloader)):
             img_batch = img_batch.reshape(img_batch.shape[0], -1).to(device)
-            with torch.no_grad():
-                R = FISTA(img_batch.T, basis.weight, args.reg, args.r_learning_rate, fista_max_iter, 0.01, device).T
+            with torch.no_grad():            
+                if c_impl_available():
+                    z_np = fista(img_batch.T.numpy().contiguous(), basis.weight.numpy(), args.reg, fista_max_iter).T
+                else:
+                    z_np = FISTA(img_batch.T, basis.weight, args.reg, args.r_learning_rate, fista_max_iter, 0.01, device).T
             
-                # if c_impl_available():
-                #     z_np = fista(x_batch.detach().numpy().contiguous(), basis.detach().numpy(), args.alpha, fista_max_iter)
-                # else:
-                #     z_np = FISTA(x_batch.detach(), basis.detach(), args.alpha, fista_max_iter, tqdm_disable=True).numpy()   
-            
-            
-            pred = basis(R)
+            pred = basis(z_np)
 
             loss = ((img_batch - pred) ** 2).sum()
             running_loss += loss.item()
