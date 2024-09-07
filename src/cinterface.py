@@ -5,7 +5,7 @@ from time import time
 
 
 def c_impl_available():
-    return False and os.path.exists("src/c/bin/fista.so")
+    return os.path.exists("src/c/bin/fista.so")
 
 def fista(x, basis, alpha, n_iter, converge_thresh=0.01):
     assert os.path.exists("src/c/bin/fista.so")
@@ -31,6 +31,7 @@ def fista(x, basis, alpha, n_iter, converge_thresh=0.01):
     # L = np.max(np.linalg.eigvalsh(basis @ basis.T))
     # alpha_L = alpha / L
     # L_inv = 1./L
+    
     L_inv = 0.01
     alpha_L = alpha
 
@@ -38,6 +39,6 @@ def fista(x, basis, alpha, n_iter, converge_thresh=0.01):
     lib.fista(x, basis, z, x.shape[0], x.shape[1], basis.shape[1], L_inv, alpha_L, n_iter, converge_thresh)
     end = time()
 
-    print(f"FISTA: {end - start:.3f}s")
+    # print(f"FISTA: {end - start:.3f}s")
     return z
 

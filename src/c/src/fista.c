@@ -30,7 +30,8 @@ void print_stack_trace();
 
 #define ALIGNMENT 64            // cache line size for Zen 3, greater than 32 bytes required for aligned AVX256 load/store
 
-#define SPARSITY_DEBUG true
+#define SPARSITY_DEBUG false
+#define DEBUG false
 
 
 #define CHECK(x)                                                                                    \
@@ -49,7 +50,8 @@ void log_time_diff(char* msg, struct timeval* start, struct timeval* stop) {
     double stop_ms = (((double)stop->tv_sec)*1000)+(((double)stop->tv_usec)/1000);
     double diff_in_sec = (stop_ms - start_ms)/1000;
 
-    printf("%s: %f\n", msg, diff_in_sec);
+    if(DEBUG)
+        printf("%s: %f\n", msg, diff_in_sec);
 }
 
 
@@ -242,10 +244,11 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
             printf("\nsparsity: %.2f %.2f %.2f %.2f %.2f\n", x_nz, basis_nz, y_nz_pre, res_nz, y_nz);
         }
 
-        
-        log_time_diff("\n\tmcpy", &start, &mcpy);
-        log_time_diff("\tgemm1", &mcpy, &gemm1);
-        log_time_diff("\tgemm2", &gemm1, &gemm2);
+        if(DEBUG) {
+            log_time_diff("\n\tmcpy", &start, &mcpy);
+            log_time_diff("\tgemm1", &mcpy, &gemm1);
+            log_time_diff("\tgemm2", &gemm1, &gemm2);
+        }
 
         gettimeofday(&ista, NULL);
 
@@ -339,18 +342,21 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
 
         gettimeofday(&diff, NULL);
 
-        log_time_diff("\ntotal", &start, &diff);
-        log_time_diff("\tista", &start, &ista);
-        log_time_diff("\tdiff", &ista, &diff);
+        if(DEBUG) {
+            log_time_diff("\ntotal", &start, &diff);
+            log_time_diff("\tista", &start, &ista);
+            log_time_diff("\tdiff", &ista, &diff);
+        
+            printf("\33[2K\r%d / %d", itr, n_iter);
+            fflush(stdout);
+        }
 
-
-        printf("\33[2K\r%d / %d", itr, n_iter);
-        fflush(stdout);
     }
 
     memcpy(Z, z_prev, dict_sz * n_samples * sizeof(float));
 
-    printf("\n");
+    if(DEBUG)
+        printf("\n");
 
     free(residual);
     free(z_prev);

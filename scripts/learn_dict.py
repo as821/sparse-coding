@@ -57,13 +57,13 @@ def main(args):
         wandb.init(config={}, project="smt_sc_dict")
 
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() and not c_impl_available() else "cpu")
     fista_max_iter = 10000
 
     basis = nn.Linear(args.n_neuron, args.size ** 2, bias=False).to(device)
     with torch.no_grad():
         basis.weight.data = F.normalize(basis.weight.data, dim=0)
-    dataloader = DataLoader(NatPatchDataset(args.batch_size, args.size, args.size, fpath=args.path), batch_size=250)
+    dataloader = DataLoader(NatPatchDataset(args.batch_size, args.size, args.size, fpath=args.path), batch_size=256)
     optim = torch.optim.SGD([{'params': basis.weight, "lr": args.learning_rate}])
     
     for e in range(args.epoch):
@@ -73,11 +73,13 @@ def main(args):
             img_batch = img_batch.reshape(img_batch.shape[0], -1).to(device)
             with torch.no_grad():            
                 if c_impl_available():
-                    z_np = fista(img_batch.T.numpy().contiguous(), basis.weight.numpy(), args.reg, fista_max_iter).T
+                    assert img_batch.shape[0] % 8 == 0
+                    z_np = fista(np.ascontiguousarray(img_batch.T.numpy()), basis.weight.numpy(), args.reg, fista_max_iter).T
                 else:
                     z_np = FISTA(img_batch.T, basis.weight, args.reg, args.r_learning_rate, fista_max_iter, 0.01, device).T
             
-            pred = basis(z_np)
+            z = torch.from_numpy(z_np)
+            pred = basis(z)
 
             loss = ((img_batch - pred) ** 2).sum()
             running_loss += loss.item()
