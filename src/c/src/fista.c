@@ -96,52 +96,6 @@ void matrix_transpose(float* src, float* dst, int M, int N) {
     }
 }
 
-
-void spmm(float* A_T, float* B_val, int* B_col, int* B_row_ptr, float* C, float alpha, int M, int N, int K) {
-    // C = alpha * A @ B + C
-    // C: M x N, dense
-    // A: M x K, dense  (given as a transposed matrix A^T: K x M for cache reasons)
-    // B: K x N, sparse
-    //      B_val, B_col are full K x N matrices and corresponding B_row_ptr records how much of each row these matrices consume
-    //      Like CSR without the compression to allow for better parallel storage/processing of rows
-    //      Values are stored in blocks of 8 (AXV register size) and B_col stores the column of the first entry in the block. Assumes N is a multiple of 8
-    CHECK(N % 8 == 0);
-
-    int row_thread_tile_sz = 4;
-
-    // TODO(as) log level of sparsity... make sure this makes sense + not running on full matrix
-    // int cnt = 0;
-    // for(int idx = 0; idx < K; idx++) {
-    //     cnt += B_row_ptr[idx];
-    // }
-    // float max_sz = N * K / 8;
-    // float frac = (float)cnt / max_sz;
-    // printf("\nDETECTED: %.4f (%d / %d)\n", frac, cnt, (int)max_sz);
-
-    #pragma omp parallel for shared(A_T, B_val, B_col, B_row_ptr, C, alpha, M, N, K, row_thread_tile_sz) default(none) schedule(dynamic)
-    for(int row_thread_tile = 0; row_thread_tile < M; row_thread_tile += row_thread_tile_sz) {
-        int row_thread_tile_end = row_thread_tile + row_thread_tile_sz < M ? row_thread_tile + row_thread_tile_sz : M;
-        
-        // work done by a single thread
-        for(int kdx = 0; kdx < K; kdx++) {          // same as tiling with size 1
-            for(int idx = row_thread_tile; idx < row_thread_tile_end; idx++) {
-                // A^T used to improve locality of column-major accesses. Advantageous to iterate over M inside of iteratin over K to amortize accesses to B_val and B_col below
-                __m256 A_block = _mm256_set1_ps(alpha * A_T[kdx * M + idx]);
-
-                // Process the entire "kdx" row of B
-                for(int row_ptr_idx = 0; row_ptr_idx < B_row_ptr[kdx]; row_ptr_idx++) {
-                    float* C_ptr = &C[idx * N + B_col[kdx * N + row_ptr_idx]];      // locality on C likely poor regardless due to B_col jumping around within each row
-                    float* B_ptr = &B_val[kdx * N + 8 * row_ptr_idx];
-                    _mm256_store_ps(C_ptr, _mm256_fmadd_ps(A_block, _mm256_load_ps(B_ptr), _mm256_load_ps(C_ptr)));
-                }
-            }
-        }
-    }
-}
-
-
-
-
 void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__ Z, int inp_dim, int n_samples, int dict_sz, float L_inv, float alpha_L, int n_iter, float converge_thresh) {
     CHECK(X);
     CHECK(basis);
@@ -163,20 +117,6 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
     CHECK(Y);
     memset(Y, 0, dict_sz * n_samples * sizeof(float));
 
-    // allocate max space possible for COO representation of Y
-    float* sparse_Y_val = (float*) aligned_alloc(ALIGNMENT, dict_sz * n_samples * sizeof(float));
-    int* sparse_Y_col = (int*) aligned_alloc(ALIGNMENT, dict_sz * n_samples * sizeof(int));         // TODO(as) can divide this by 8 due to vectorized storage
-    int* y_row_ptr = (int*) aligned_alloc(ALIGNMENT, dict_sz * sizeof(int));
-    CHECK(sparse_Y_val && sparse_Y_col);
-
-    memset(sparse_Y_val, 0, dict_sz * n_samples * sizeof(float));       // TODO(as) temp
-    memset(sparse_Y_col, 0, dict_sz * n_samples * sizeof(int));       // TODO(as) temp
-
-    // basis matrix tends to be small (relative to any of the per-sample matrices X or Y), so a transpose is worthwhile for cache benefits in spmm
-    float* basis_tranpose = (float*) aligned_alloc(ALIGNMENT, inp_dim * dict_sz * sizeof(float));
-    CHECK(basis_tranpose);
-    matrix_transpose(basis, basis_tranpose, inp_dim, dict_sz);
-
     // assumed by vectorization and sparse Y storage
     CHECK(n_samples % 8 == 0);
 
@@ -196,37 +136,9 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
         // residual = x - (basis @ z)
         memcpy(residual, X, inp_dim * n_samples * sizeof(float));    
         gettimeofday(&mcpy, NULL);
-        if(itr < 50) {
-            // Y becomes highly sparse with more iterations. Switch to sparse matmul after initial iterations
-            cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, inp_dim, n_samples, dict_sz, -1.0f, basis, dict_sz, Y, n_samples, 1.0f, residual, n_samples);
-        }
-        else {
-            // TODO(as) NOTE: Y becomes highly sparse quickly (0.47 -> 0.05). Could be used to significantly speed up this matmul
+        // Y becomes highly sparse with more iterations. Switch to sparse matmul after initial iterations
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, inp_dim, n_samples, dict_sz, -1.0f, basis, dict_sz, Y, n_samples, 1.0f, residual, n_samples);
 
-            // dense-sparse -> dense matmul
-            spmm(basis_tranpose, sparse_Y_val, sparse_Y_col, y_row_ptr, residual, -1.0f, inp_dim, n_samples, dict_sz);
-
-            // TODO(as) compare result in residual matrix with the result we would have gotten from CBLAS
-
-            // Compare dense/sparse result with the one we get from CBLAS
-            // float* residual_gt = (float*) aligned_alloc(ALIGNMENT, inp_dim * n_samples * sizeof(float));
-            // CHECK(residual_gt);
-            // memcpy(residual_gt, X, inp_dim * n_samples * sizeof(float));
-            // cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, inp_dim, n_samples, dict_sz, -1.0f, basis, dict_sz, Y, n_samples, 1.0f, residual_gt, n_samples);
-            
-            // float thresh = 0.0001;
-            // float max_diff = 0;
-            // for(int idx = 0; idx < inp_dim * n_samples; idx++) {
-            //     float diff = fabs(residual[idx] - residual_gt[idx]);
-            //     if(diff > max_diff)
-            //         max_diff = diff;
-            // }
-            // printf("\nMAX DIFF: %f\n", max_diff);
-            // CHECK(max_diff < thresh);
-            
-            // printf("\nSUCCESS!!!!\n\n");
-            // exit(1);
-        }
         if(SPARSITY_DEBUG)
             res_nz = n_nonzero_elements(residual, inp_dim * n_samples);
 
@@ -265,81 +177,46 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
         // calculate difference in Z due to this step, calculate norm of the difference and prev. Z, update z_prev 
         __m256 avx_diff_norm = _mm256_set1_ps(0);
         __m256 avx_prev_z_norm = _mm256_set1_ps(0);
+        for(int row_idx = 0; row_idx < dict_sz; row_idx++) {             // TODO(as) make sure static scheduling == assigning threads a contiguous block...
+            int row_offset = row_idx * n_samples;
+            for(int col_idx = 0; col_idx < n_samples; col_idx += 8) {
+                int idx = row_offset + col_idx;
 
-        int row_tile_sz = 512;
+                // apply thresholding to the BLAS output
+                // Y[idx] = Y[idx] < alpha_L ? 0 : Y[idx] - alpha_L;
+                __m256 blas_res_1 = _mm256_load_ps(Y + idx);
+                __m256 sub_vec = _mm256_sub_ps(blas_res_1, alpha_L_vec);
+                __m256 mask_1 = _mm256_cmp_ps(zero_vec, sub_vec, _CMP_LT_OS);       // A < B (ordered, signalling)
+                __m256 Y_val1 = _mm256_blendv_ps(zero_vec, sub_vec, mask_1);        // if mask, then B
 
-        #pragma omp parallel
-        {
-            struct {
-                __m256 avx_diff_norm_local;
-                __m256 avx_prev_z_norm_local;
-                char padding[32];  // Ensure 64-byte alignment
-            } local_data __attribute__((aligned(64))) = {_mm256_set1_ps(0), _mm256_set1_ps(0)};
+                // float diff = Y[idx] - z_prev[idx];
+                __m256 diff1 = _mm256_sub_ps(Y_val1, _mm256_load_ps(z_prev + idx));
+                
+                // y_slc = z_slc + ((tk_prev - 1) / tk) * z_diff
+                __m256 Y_next = _mm256_fmadd_ps(tk_mult, diff1, Y_val1);
 
-            #pragma omp for nowait
-            for(int row_tile = 0; row_tile < dict_sz; row_tile += row_tile_sz) {
-                int row_tile_end = row_tile + row_tile_sz < dict_sz ? row_tile + row_tile_sz : dict_sz;
-                for(int row_idx = row_tile; row_idx < row_tile_end; row_idx++) {             // TODO(as) make sure static scheduling == assigning threads a contiguous block...
-                    int row_ptr = 0;
-                    int row_offset = row_idx * n_samples;
-                    for(int col_idx = 0; col_idx < n_samples; col_idx += 8) {
-                        int idx = row_offset + col_idx;
+                // copy Z value out of Y before it gets updated
+                // non-temporal store, should bypass cache hierarchy since never accessed again
+                _mm256_stream_ps(z_prev + idx, Y_val1);
+                _mm256_stream_ps(Y + idx, Y_next);
 
-                        // apply thresholding to the BLAS output
-                        // Y[idx] = Y[idx] < alpha_L ? 0 : Y[idx] - alpha_L;
-                        __m256 blas_res_1 = _mm256_load_ps(Y + idx);
-                        __m256 sub_vec = _mm256_sub_ps(blas_res_1, alpha_L_vec);
-                        __m256 mask_1 = _mm256_cmp_ps(zero_vec, sub_vec, _CMP_LT_OS);       // A < B (ordered, signalling)
-                        __m256 Y_val1 = _mm256_blendv_ps(zero_vec, sub_vec, mask_1);        // if mask, then B
-
-                        // float diff = Y[idx] - z_prev[idx];
-                        __m256 diff1 = _mm256_sub_ps(Y_val1, _mm256_load_ps(z_prev + idx));
-                        
-                        // y_slc = z_slc + ((tk_prev - 1) / tk) * z_diff
-                        __m256 Y_next = _mm256_fmadd_ps(tk_mult, diff1, Y_val1);
-                        if(_mm256_movemask_ps(_mm256_cmp_ps(Y_next, zero_vec, _CMP_NEQ_OS)) != 0) {
-                            // if any entry in the set is NZ, store the entire vector
-                            // row is implicit from location in sparse_Y_col and allows parallel processing of rows
-                            sparse_Y_col[row_offset + row_ptr] = col_idx;
-                            
-                            // duplication of Y allows us to use sparse Y for first matmul and then the dense one of the dense increment with the result of the second matmul
-                            _mm256_stream_ps(&sparse_Y_val[row_offset + 8 * row_ptr], Y_next);
-                            row_ptr++;
-                        }
-
-                        // copy Z value out of Y before it gets updated
-                        // non-temporal store, should bypass cache hierarchy since never accessed again
-                        _mm256_stream_ps(z_prev + idx, Y_val1);
-                        _mm256_stream_ps(Y + idx, Y_next);
-
-                        // diff_norm += diff * diff;
-                        local_data.avx_diff_norm_local = _mm256_fmadd_ps(diff1, diff1, local_data.avx_diff_norm_local);        // a * b + c
-                        
-                        // Actually the norm of the current Y values, to be used in the next iteration
-                        // prev_z_norm += z_prev[idx] * z_prev[idx];
-                        local_data.avx_prev_z_norm_local = _mm256_fmadd_ps(Y_val1, Y_val1, local_data.avx_prev_z_norm_local);
-                    }
-                    y_row_ptr[row_idx] = row_ptr;
-                }
-            }
-
-            #pragma omp critical
-            {
-                avx_diff_norm = _mm256_add_ps(avx_diff_norm, local_data.avx_diff_norm_local);
-                avx_prev_z_norm = _mm256_add_ps(avx_prev_z_norm, local_data.avx_prev_z_norm_local);
+                // diff_norm += diff * diff;
+                avx_diff_norm = _mm256_fmadd_ps(diff1, diff1, avx_diff_norm);        // a * b + c
+                
+                // Actually the norm of the current Y values, to be used in the next iteration
+                // prev_z_norm += z_prev[idx] * z_prev[idx];
+                avx_prev_z_norm = _mm256_fmadd_ps(Y_val1, Y_val1, avx_prev_z_norm);
             }
         }
+
         float diff_norm = horizontal_add(avx_diff_norm);
 
         // torch.norm(z_diff) / torch.norm(prev_z) < converge_thresh
         // Frobenius norm can be defined as the L2 norm of the flatttened matrix
         float norm_ratio = diff_norm / prev_z_norm;
         norm_ratio = sqrtf(norm_ratio);         // equivalent to sqrtf(diff_norm) / sqrtf(prev_z_norm)
-        if(itr != 0 && norm_ratio < converge_thresh)
-            break;
 
         prev_z_norm = horizontal_add(avx_prev_z_norm);
-
         gettimeofday(&diff, NULL);
 
         if(DEBUG) {
@@ -351,6 +228,8 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
             fflush(stdout);
         }
 
+        if(itr != 0 && norm_ratio < converge_thresh)
+            break;
     }
 
     memcpy(Z, z_prev, dict_sz * n_samples * sizeof(float));
@@ -361,10 +240,6 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
     free(residual);
     free(z_prev);
     free(Y);
-
-    free(sparse_Y_val);
-    free(sparse_Y_col);
-    free(y_row_ptr);
 }
 
 
