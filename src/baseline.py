@@ -4,43 +4,43 @@ from time import time
 import math
 from tqdm import tqdm
 
-def torch_positive_only(basis, x, z, L_inv, mult):
+def torch_positive_only(basis, x, z, L_inv, mult):    
     residual = x - (basis @ z)
     mm = basis.T @ residual
     z += L_inv * mm
+    
     z -= mult
     z = torch.clamp(z, min=0)       # vs. F.relu
     return z
 
 
-def FISTA(x, basis, alpha, num_iter, converge_thresh=0.01, batch_sz=256, tqdm_disable=False):
+def FISTA(x, basis, alpha, lr, num_iter, converge_thresh=0.01, device="cpu", batch_sz=256, tqdm_disable=True):
     start_time = time()
 
     # L is upper bound on the largest eigenvalue of the basis matrix
-    # L = torch.max(torch.linalg.eigvalsh(basis @ basis.T))
+    L = torch.max(torch.linalg.eigvalsh(basis @ basis.T))
     # mult = alpha / L
     # L_inv = 1./L
+    # print(f"{L} {L_inv} {lr}")    
+    # lr = L_inv
 
-    L_inv = 0.01
-    mult = alpha
+    lr = 0.01
 
-
-
-    z = torch.zeros((basis.shape[1], x.shape[1]), dtype=basis.dtype, device="cpu")
+    z = torch.zeros((basis.shape[1], x.shape[1]), dtype=basis.dtype, device=device)
 
     max_itr = -1
     for start in tqdm(range(0, x.shape[1], batch_sz), disable=tqdm_disable):
         end = min(start + batch_sz, x.shape[1])
         
         z_slc = z[:, start:end]
-        x_slc = x[:, start:end]
+        x_slc = x[:, start:end].to(device)
 
         prev_z = torch.zeros_like(z_slc)
         y_slc = z_slc.clone()
 
         tk, tk_prev = 1, 1
         for itr in range(0, num_iter):
-            z_slc = torch_positive_only(basis, x_slc, y_slc.clone(), L_inv, mult)
+            z_slc = torch_positive_only(basis, x_slc, y_slc.clone(), lr, alpha)
 
             tk_prev = tk
             tk = (1 + math.sqrt(1 + 4 * tk ** 2)) / 2
@@ -56,4 +56,4 @@ def FISTA(x, basis, alpha, num_iter, converge_thresh=0.01, batch_sz=256, tqdm_di
         max_itr = max(max_itr, itr)
     if not tqdm_disable:
         print(f"FISTA iters: {max_itr} / {num_iter} in {time() - start_time:.3f}s")
-    return z
+    return z.to(device)
