@@ -74,7 +74,7 @@ def main(args):
             with torch.no_grad():            
                 if c_impl_available():
                     assert img_batch.shape[0] % 8 == 0
-                    z_np = fista(img_batch.T.contiguous().numpy(), basis.weight.numpy(), args.reg, fista_max_iter).T
+                    z_np = fista(img_batch.numpy(), basis.weight.numpy(), args.reg, fista_max_iter)
                     z = torch.from_numpy(z_np)
                 else:
                     z = FISTA(img_batch, basis.weight, args.reg, args.r_learning_rate, fista_max_iter, 0.01, device)
