@@ -5,8 +5,8 @@ import math
 from tqdm import tqdm
 
 def torch_positive_only(basis, x, z, L_inv, mult):    
-    residual = x - (basis @ z)
-    mm = basis.T @ residual
+    residual = x - (z @ basis.T)
+    mm = residual @ basis
     z += L_inv * mm
     
     z -= mult
@@ -26,14 +26,14 @@ def FISTA(x, basis, alpha, lr, num_iter, converge_thresh=0.01, device="cpu", bat
 
     lr = 0.01
 
-    z = torch.zeros((basis.shape[1], x.shape[1]), dtype=basis.dtype, device=device)
+    z = torch.zeros((x.shape[0], basis.shape[1]), dtype=basis.dtype, device=device)
 
     max_itr = -1
-    for start in tqdm(range(0, x.shape[1], batch_sz), disable=tqdm_disable):
-        end = min(start + batch_sz, x.shape[1])
+    for start in tqdm(range(0, x.shape[0], batch_sz), disable=tqdm_disable):
+        end = min(start + batch_sz, x.shape[0])
         
-        z_slc = z[:, start:end]
-        x_slc = x[:, start:end].to(device)
+        z_slc = z[start:end]
+        x_slc = x[start:end].to(device)
 
         prev_z = torch.zeros_like(z_slc)
         y_slc = z_slc.clone()
@@ -51,9 +51,9 @@ def FISTA(x, basis, alpha, lr, num_iter, converge_thresh=0.01, device="cpu", bat
             if torch.norm(z_diff) / torch.norm(prev_z) < converge_thresh and itr > 0:
                 break
             prev_z = z_slc.clone()
-        z[:, start:end] = z_slc
+        z[start:end] = z_slc
 
         max_itr = max(max_itr, itr)
-    # if not tqdm_disable:
-    print(f"FISTA iters: {max_itr} / {num_iter} in {time() - start_time:.3f}s")
+    if not tqdm_disable:
+        print(f"FISTA iters: {max_itr} / {num_iter} in {time() - start_time:.3f}s")
     return z.to(device)

@@ -77,7 +77,7 @@ def main(args):
                     z_np = fista(img_batch.T.contiguous().numpy(), basis.weight.numpy(), args.reg, fista_max_iter).T
                     z = torch.from_numpy(z_np)
                 else:
-                    z = FISTA(img_batch.T, basis.weight, args.reg, args.r_learning_rate, fista_max_iter, 0.01, device).T
+                    z = FISTA(img_batch, basis.weight, args.reg, args.r_learning_rate, fista_max_iter, 0.01, device)
             
             pred = basis(z)
 
