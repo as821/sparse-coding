@@ -20,11 +20,11 @@ def main(args):
     basis = basis / (basis.norm(2,0) + 1e-10)
 
 
-    c_res = fista(x.numpy(), basis.numpy(), 0.01, 1000)
+    c_res = fista(x, basis, 0.01, 1000)
 
     if args.comparison:
         python_res = FISTA(x, basis, 0.01, 1000)
-        diff = np.abs(python_res.numpy() - c_res)
+        diff = np.abs(python_res.numpy() - c_res.numpy())
         print(f"{diff.max():.4f} {diff.mean():.4f}")
 
 
