@@ -15,16 +15,15 @@ from cinterface import fista
 
 def main(args):
     dset = NatPatchDataset(args.nsamples, args.patch_sz, args.patch_sz, 4, args.path)
-    x = dset.images.flatten(1, 2).permute((1, 0))
-    
-    basis = torch.randn((x.shape[0], args.dict_sz))
+    x = dset.images.flatten(1, 2)
+    basis = torch.randn((x.shape[1], args.dict_sz))
     basis = basis / (basis.norm(2,0) + 1e-10)
 
 
-    c_res = fista(x.contiguous().numpy(), basis.numpy(), 0.01, 100)
+    c_res = fista(x.numpy(), basis.numpy(), 0.01, 1000)
 
     if args.comparison:
-        python_res = FISTA(x, basis, 0.01, 100)
+        python_res = FISTA(x, basis, 0.01, 1000)
         diff = np.abs(python_res.numpy() - c_res)
         print(f"{diff.max():.4f} {diff.mean():.4f}")
 

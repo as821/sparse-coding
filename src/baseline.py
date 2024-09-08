@@ -14,7 +14,7 @@ def torch_positive_only(basis, x, z, L_inv, mult):
     return z
 
 
-def FISTA(x, basis, alpha, lr, num_iter, converge_thresh=0.01, device="cpu", batch_sz=256, tqdm_disable=True):
+def FISTA(x, basis, alpha, num_iter, converge_thresh=0.01, device="cpu", batch_sz=256, tqdm_disable=True):
     start_time = time()
 
     # L is upper bound on the largest eigenvalue of the basis matrix
@@ -27,33 +27,25 @@ def FISTA(x, basis, alpha, lr, num_iter, converge_thresh=0.01, device="cpu", bat
     lr = 0.01
 
     z = torch.zeros((x.shape[0], basis.shape[1]), dtype=basis.dtype, device=device)
+    x = x.to(device)
 
-    max_itr = -1
-    for start in tqdm(range(0, x.shape[0], batch_sz), disable=tqdm_disable):
-        end = min(start + batch_sz, x.shape[0])
-        
-        z_slc = z[start:end]
-        x_slc = x[start:end].to(device)
+    prev_z = torch.zeros_like(z)
+    y_slc = z.clone()
 
-        prev_z = torch.zeros_like(z_slc)
-        y_slc = z_slc.clone()
+    tk, tk_prev = 1, 1
+    for itr in range(0, num_iter):
+        z = torch_positive_only(basis, x, y_slc.clone(), lr, alpha)
 
-        tk, tk_prev = 1, 1
-        for itr in range(0, num_iter):
-            z_slc = torch_positive_only(basis, x_slc, y_slc.clone(), lr, alpha)
+        tk_prev = tk
+        tk = (1 + math.sqrt(1 + 4 * tk ** 2)) / 2
 
-            tk_prev = tk
-            tk = (1 + math.sqrt(1 + 4 * tk ** 2)) / 2
+        z_diff = z - prev_z
+        y_slc = z + ((tk_prev - 1) / tk) * z_diff
 
-            z_diff = z_slc - prev_z
-            y_slc = z_slc + ((tk_prev - 1) / tk) * z_diff
+        if torch.norm(z_diff) / torch.norm(prev_z) < converge_thresh and itr > 0:
+            break
+        prev_z = z.clone()
 
-            if torch.norm(z_diff) / torch.norm(prev_z) < converge_thresh and itr > 0:
-                break
-            prev_z = z_slc.clone()
-        z[start:end] = z_slc
-
-        max_itr = max(max_itr, itr)
-    if not tqdm_disable:
-        print(f"FISTA iters: {max_itr} / {num_iter} in {time() - start_time:.3f}s")
+    # if not tqdm_disable:
+    print(f"FISTA iters: {itr} / {num_iter} in {time() - start_time:.3f}s")
     return z.to(device)

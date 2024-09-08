@@ -5,7 +5,7 @@ from time import time
 
 
 def c_impl_available():
-    return os.path.exists("src/c/bin/fista.so") and False
+    return os.path.exists("src/c/bin/fista.so")
 
 def fista(x, basis, alpha, n_iter, converge_thresh=0.01):
     assert os.path.exists("src/c/bin/fista.so")
@@ -24,7 +24,7 @@ def fista(x, basis, alpha, n_iter, converge_thresh=0.01):
         ]
     lib.fista.restype = None
 
-    z = np.zeros((basis.shape[1], x.shape[1]), dtype=np.float32)
+    z = np.zeros((x.shape[0], basis.shape[1]), dtype=np.float32)
     assert x.dtype == np.float32 and basis.dtype == np.float32
 
     # L is upper bound on the largest eigenvalue of the basis matrix
