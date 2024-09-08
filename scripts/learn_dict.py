@@ -59,22 +59,22 @@ def plot_color(rf, out_dim, M):
     # rf = rf.T
     # rf = rf.reshape(out_dim, M, M, 3)
 
-    n = int(np.ceil(np.sqrt(normalized.shape[0])))
+    n = 5 # int(np.ceil(np.sqrt(normalized.shape[0])))
     fig, axes = plt.subplots(nrows=n, ncols=n, sharex=True, sharey=True)
     fig.set_size_inches(10, 10)
-    for i in range(normalized.shape[0]):
+    for i in range(min(n * n, normalized.shape[0])):
         ax = axes[i // n][i % n]
         ax.imshow(normalized[i]) #, cmap='gray', vmin=-1, vmax=1)
         ax.set_xticks([])
         ax.set_yticks([])
         ax.set_aspect('equal')
-    
-    for j in range(normalized.shape[0], n * n):
-        ax = axes[j // n][j % n]
-        ax.imshow(np.ones_like(normalized[0]) * -1, cmap='gray', vmin=-1, vmax=1)
-        ax.set_xticks([])
-        ax.set_yticks([])
-        ax.set_aspect('equal')
+    if n * n > normalized.shape[0]:
+        for j in range(normalized.shape[0], n * n):
+            ax = axes[j // n][j % n]
+            ax.imshow(np.ones_like(normalized[0]) * -1, cmap='gray', vmin=-1, vmax=1)
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_aspect('equal')
     fig.subplots_adjust(wspace=0.0, hspace=0.0)
     return fig
 
@@ -136,6 +136,9 @@ def main(args):
 
         vis_dict = {}
         vis_dict['loss'] = running_loss / c
+        print(running_loss / c)
+
+
         if (e % 5 == 4 and args.wandb) or True:
             # plotting
             if args.dataset == "cifar10":
