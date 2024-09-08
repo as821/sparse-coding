@@ -110,31 +110,16 @@ def main(args):
 
 
 if __name__ == "__main__":
-
-
     parser = argparse.ArgumentParser()
-    # parser = argparse.ArgumentParser(description="Template")
-    # parser.add_argument('-N', '--batch_size', default=2000, type=int, help="Batch size")
-    # parser.add_argument('-K', '--n_neuron', default=400, type=int, help="The number of neurons")
-    # parser.add_argument('-M', '--size', default=10, type=int, help="The size of receptive field")
-    # parser.add_argument('-e', '--epoch', default=100, type=int, help="Number of Epochs")
-    # parser.add_argument('-lr', '--learning_rate', default=1e-2, type=float, help="Learning rate")
-    # parser.add_argument('-rlr', '--r_learning_rate', default=1e-2, type=float, help="Learning rate for ISTA")
-    # parser.add_argument('-lmda', '--reg', default=5e-3, type=float, help="LSTM hidden size")
-
-
-
     parser.add_argument('--path', default="/Users/andrewstange/Desktop/research/sparse-coding/data/IMAGES.mat", type=str, help="dataset path")
     parser.add_argument('--ckpt-path', default="", type=str, help="checkpoint directory")
-    parser.add_argument('--wandb', action="store_true")
-
     parser.add_argument('--nsamples', default=2000, type=int, help="batch size")
     parser.add_argument('--dict_sz', default=400, type=int, help="dictionary size")
     parser.add_argument('--patch_sz', default=10, type=int, help="patch size")
     parser.add_argument('--epoch', default=100, type=int, help="number of epochs")
     parser.add_argument('--lr', default=1e-2, type=float, help="dictionary learning rate")
     parser.add_argument('--alpha', default=5e-3, type=float, help="alpha parameter for FISTA")
-    
+    parser.add_argument('--wandb', action="store_true")
 
 
     main(parser.parse_args())

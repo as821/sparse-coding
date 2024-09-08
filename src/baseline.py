@@ -8,24 +8,13 @@ def torch_positive_only(basis, x, z, L_inv, mult):
     residual = x - (z @ basis.T)
     mm = residual @ basis
     z += L_inv * mm
-    
     z -= mult
-    z = torch.clamp(z, min=0)       # vs. F.relu
+    z = torch.clamp(z, min=0)
     return z
 
 
-def FISTA(x, basis, alpha, num_iter, converge_thresh=0.01, device="cpu", batch_sz=256, tqdm_disable=True):
+def FISTA(x, basis, alpha, num_iter, converge_thresh=0.01, device="cpu", batch_sz=256, tqdm_disable=True, lr=0.01):
     start_time = time()
-
-    # L is upper bound on the largest eigenvalue of the basis matrix
-    # L = torch.max(torch.linalg.eigvalsh(basis @ basis.T))
-    # mult = alpha / L
-    # L_inv = 1./L
-    # print(f"{L} {L_inv} {lr}")    
-    # lr = L_inv
-
-    lr = 0.01
-
     z = torch.zeros((x.shape[0], basis.shape[1]), dtype=basis.dtype, device=device)
     x = x.to(device)
 
@@ -46,6 +35,6 @@ def FISTA(x, basis, alpha, num_iter, converge_thresh=0.01, device="cpu", batch_s
             break
         prev_z = z.clone()
 
-    # if not tqdm_disable:
-    print(f"FISTA iters: {itr} / {num_iter} in {time() - start_time:.3f}s")
+    if not tqdm_disable:
+        print(f"FISTA iters: {itr} / {num_iter} in {time() - start_time:.3f}s")
     return z.to(device)
