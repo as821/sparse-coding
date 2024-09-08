@@ -45,6 +45,40 @@ def plot_rf(rf, out_dim, M):
     fig.subplots_adjust(wspace=0.0, hspace=0.0)
     return fig
 
+def plot_color(rf, out_dim, M):
+    
+    normalized = np.zeros_like(rf)
+    for i in range(3):  # For each color channel
+        channel = rf[:, :,:,i]
+        normalized[:, :,:,i] = (channel - channel.min()) / (channel.max() - channel.min())
+    
+    
+    
+    # rf = rf.reshape(out_dim, -1)
+    # rf = rf.T / np.abs(rf).max(axis=1)
+    # rf = rf.T
+    # rf = rf.reshape(out_dim, M, M, 3)
+
+    n = int(np.ceil(np.sqrt(normalized.shape[0])))
+    fig, axes = plt.subplots(nrows=n, ncols=n, sharex=True, sharey=True)
+    fig.set_size_inches(10, 10)
+    for i in range(normalized.shape[0]):
+        ax = axes[i // n][i % n]
+        ax.imshow(normalized[i]) #, cmap='gray', vmin=-1, vmax=1)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_aspect('equal')
+    
+    for j in range(normalized.shape[0], n * n):
+        ax = axes[j // n][j % n]
+        ax.imshow(np.ones_like(normalized[0]) * -1, cmap='gray', vmin=-1, vmax=1)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_aspect('equal')
+    fig.subplots_adjust(wspace=0.0, hspace=0.0)
+    return fig
+
+
 
 def main(args):
     timestamp = time.time()
@@ -102,9 +136,12 @@ def main(args):
 
         vis_dict = {}
         vis_dict['loss'] = running_loss / c
-        if e % 5 == 4 and args.wandb:
+        if (e % 5 == 4 and args.wandb) or True:
             # plotting
-            fig = plot_rf(basis.weight.T.reshape(args.dict_sz, args.patch_sz, args.patch_sz).cpu().data.numpy(), args.dict_sz, args.patch_sz)
+            if args.dataset == "cifar10":
+                fig = plot_color(basis.weight.T.reshape(args.dict_sz, args.patch_sz, args.patch_sz, 3).cpu().data.numpy(), args.dict_sz, args.patch_sz)
+            else:
+                fig = plot_rf(basis.weight.T.reshape(args.dict_sz, args.patch_sz, args.patch_sz).cpu().data.numpy(), args.dict_sz, args.patch_sz)
             vis_dict["dict"] = wandb.Image(plt)
 
         if args.wandb:
@@ -122,7 +159,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--path', default="/Users/andrewstange/Desktop/research/sparse-coding/data/cifar10", type=str, help="dataset path")
     parser.add_argument('--ckpt-path', default="", type=str, help="checkpoint directory")
-    parser.add_argument('--nsamples', default=2000, type=int, help="batch size")
+    parser.add_argument('--nsamples', default=20, type=int, help="batch size")
     parser.add_argument('--dict_sz', default=400, type=int, help="dictionary size")
     parser.add_argument('--patch_sz', default=10, type=int, help="patch size")
     parser.add_argument('--epoch', default=100, type=int, help="number of epochs")
