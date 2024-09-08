@@ -17,7 +17,7 @@ sys.path.append(os.path.join(os.getcwd(), 'src'))
 sys.path.append(os.path.join(os.getcwd(), 'src/c'))
 
 
-from dataset import NatPatchDataset
+from dataset import NatPatchDataset, CIFAR10RandomPatch
 from cinterface import fista, c_impl_available
 from baseline import FISTA
 
@@ -59,18 +59,27 @@ def main(args):
 
     device = torch.device("cuda" if torch.cuda.is_available() and not c_impl_available() else "cpu")
     fista_max_iter = 10000
+    
+    basis_shape = args.patch_sz ** 2
+    if args.dataset == "nat":
+        dset = NatPatchDataset(args.nsamples, args.patch_sz, args.patch_sz, fpath=args.path)
+    elif args.dataset == "cifar10":
+        dset = CIFAR10RandomPatch(args.nsamples, args.patch_sz, args.patch_sz, fpath=args.path)
+        basis_shape *= 3
+    dataloader = DataLoader(dset, batch_size=256)
 
-    basis = nn.Linear(args.dict_sz, args.patch_sz ** 2, bias=False).to(device)
+
+
+    basis = nn.Linear(args.dict_sz, basis_shape, bias=False).to(device)
     with torch.no_grad():
         basis.weight.data = F.normalize(basis.weight.data, dim=0)
-    dataloader = DataLoader(NatPatchDataset(args.nsamples, args.patch_sz, args.patch_sz, fpath=args.path), batch_size=256)
     optim = torch.optim.SGD([{'params': basis.weight, "lr": args.lr}])
     
     for e in range(args.epoch):
         running_loss = 0
         c = 0
         for img_batch in tqdm(dataloader, desc='training', total=len(dataloader)):
-            img_batch = img_batch.reshape(img_batch.shape[0], -1).to(device)
+            img_batch = img_batch.to(device)
             with torch.no_grad():            
                 if c_impl_available():
                     assert img_batch.shape[0] % 8 == 0
@@ -111,7 +120,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--path', default="/Users/andrewstange/Desktop/research/sparse-coding/data/IMAGES.mat", type=str, help="dataset path")
+    parser.add_argument('--path', default="/Users/andrewstange/Desktop/research/sparse-coding/data/cifar10", type=str, help="dataset path")
     parser.add_argument('--ckpt-path', default="", type=str, help="checkpoint directory")
     parser.add_argument('--nsamples', default=2000, type=int, help="batch size")
     parser.add_argument('--dict_sz', default=400, type=int, help="dictionary size")
@@ -119,6 +128,7 @@ if __name__ == "__main__":
     parser.add_argument('--epoch', default=100, type=int, help="number of epochs")
     parser.add_argument('--lr', default=1e-2, type=float, help="dictionary learning rate")
     parser.add_argument('--alpha', default=5e-3, type=float, help="alpha parameter for FISTA")
+    parser.add_argument('--dataset', default='cifar10', choices=['nat', 'cifar10'], help='dataset to use')
     parser.add_argument('--wandb', action="store_true")
 
 
