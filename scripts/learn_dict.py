@@ -60,11 +60,11 @@ def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() and not c_impl_available() else "cpu")
     fista_max_iter = 10000
 
-    basis = nn.Linear(args.n_neuron, args.size ** 2, bias=False).to(device)
+    basis = nn.Linear(args.dict_sz, args.patch_sz ** 2, bias=False).to(device)
     with torch.no_grad():
         basis.weight.data = F.normalize(basis.weight.data, dim=0)
-    dataloader = DataLoader(NatPatchDataset(args.batch_size, args.size, args.size, fpath=args.path), batch_size=256)
-    optim = torch.optim.SGD([{'params': basis.weight, "lr": args.learning_rate}])
+    dataloader = DataLoader(NatPatchDataset(args.nsamples, args.patch_sz, args.patch_sz, fpath=args.path), batch_size=256)
+    optim = torch.optim.SGD([{'params': basis.weight, "lr": args.lr}])
     
     for e in range(args.epoch):
         running_loss = 0
@@ -74,10 +74,10 @@ def main(args):
             with torch.no_grad():            
                 if c_impl_available():
                     assert img_batch.shape[0] % 8 == 0
-                    z_np = fista(img_batch.numpy(), basis.weight.numpy(), args.reg, fista_max_iter)
+                    z_np = fista(img_batch.numpy(), basis.weight.numpy(), args.alpha, fista_max_iter)
                     z = torch.from_numpy(z_np)
                 else:
-                    z = FISTA(img_batch, basis.weight, args.reg, args.r_learning_rate, fista_max_iter, 0.01, device)
+                    z = FISTA(img_batch, basis.weight, args.alpha, fista_max_iter, 0.01, device)
             
             pred = basis(z)
 
@@ -96,7 +96,7 @@ def main(args):
         vis_dict['loss'] = running_loss / c
         if e % 5 == 4 and args.wandb:
             # plotting
-            fig = plot_rf(basis.weight.T.reshape(args.n_neuron, args.size, args.size).cpu().data.numpy(), args.n_neuron, args.size)
+            fig = plot_rf(basis.weight.T.reshape(args.dict_sz, args.patch_sz, args.patch_sz).cpu().data.numpy(), args.dict_sz, args.patch_sz)
             vis_dict["dict"] = wandb.Image(plt)
 
         if args.wandb:
@@ -115,13 +115,13 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     # parser = argparse.ArgumentParser(description="Template")
-    parser.add_argument('-N', '--batch_size', default=2000, type=int, help="Batch size")
-    parser.add_argument('-K', '--n_neuron', default=400, type=int, help="The number of neurons")
-    parser.add_argument('-M', '--size', default=10, type=int, help="The size of receptive field")
-    parser.add_argument('-e', '--epoch', default=100, type=int, help="Number of Epochs")
-    parser.add_argument('-lr', '--learning_rate', default=1e-2, type=float, help="Learning rate")
-    parser.add_argument('-rlr', '--r_learning_rate', default=1e-2, type=float, help="Learning rate for ISTA")
-    parser.add_argument('-lmda', '--reg', default=5e-3, type=float, help="LSTM hidden size")
+    # parser.add_argument('-N', '--batch_size', default=2000, type=int, help="Batch size")
+    # parser.add_argument('-K', '--n_neuron', default=400, type=int, help="The number of neurons")
+    # parser.add_argument('-M', '--size', default=10, type=int, help="The size of receptive field")
+    # parser.add_argument('-e', '--epoch', default=100, type=int, help="Number of Epochs")
+    # parser.add_argument('-lr', '--learning_rate', default=1e-2, type=float, help="Learning rate")
+    # parser.add_argument('-rlr', '--r_learning_rate', default=1e-2, type=float, help="Learning rate for ISTA")
+    # parser.add_argument('-lmda', '--reg', default=5e-3, type=float, help="LSTM hidden size")
 
 
 
@@ -129,13 +129,12 @@ if __name__ == "__main__":
     parser.add_argument('--ckpt-path', default="", type=str, help="checkpoint directory")
     parser.add_argument('--wandb', action="store_true")
 
-    # parser.add_argument('--patch_sz', default=10, type=int, help="patch size")
-    # parser.add_argument('--nsamples', default=2000, type=int, help="batch size")
-    # parser.add_argument('--epoch', default=100, type=int, help="number of epochs")
-    # parser.add_argument('--dict_sz', default=128, type=int, help="dictionary size")
-    # parser.add_argument('--batch_sz', default=256, type=int, help="number of samples to process at once")
-    # parser.add_argument('--lr', default=1e-2, type=float, help="dictionary learning rate")
-    # parser.add_argument('--alpha', default=5e-3, type=float, help="alpha parameter for FISTA")
+    parser.add_argument('--nsamples', default=2000, type=int, help="batch size")
+    parser.add_argument('--dict_sz', default=400, type=int, help="dictionary size")
+    parser.add_argument('--patch_sz', default=10, type=int, help="patch size")
+    parser.add_argument('--epoch', default=100, type=int, help="number of epochs")
+    parser.add_argument('--lr', default=1e-2, type=float, help="dictionary learning rate")
+    parser.add_argument('--alpha', default=5e-3, type=float, help="alpha parameter for FISTA")
     
 
 
