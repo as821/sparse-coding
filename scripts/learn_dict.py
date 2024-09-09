@@ -140,7 +140,7 @@ def main(args):
         n_activations_per_sample = (pred != 0).to(int).sum(dim=1)
         vis_dict['max_sample_active'] = n_activations_per_sample.max()
         vis_dict['min_sample_active'] = n_activations_per_sample.min()
-        vis_dict['mean_sample_active'] = n_activations_per_sample.mean()
+        vis_dict['mean_sample_active'] = n_activations_per_sample.float().mean()
 
         if e % 5 == 4 and args.wandb:
             # plotting
