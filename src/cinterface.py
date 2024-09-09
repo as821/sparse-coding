@@ -5,7 +5,7 @@ from time import time
 
 
 def c_impl_available():
-    return os.path.exists("src/c/bin/fista.so")
+    return os.path.exists("src/c/bin/fista.so") and False
 
 def fista(x, basis, alpha, n_iter, converge_thresh=0.01, lr=0.01):
     assert os.path.exists("src/c/bin/fista.so")

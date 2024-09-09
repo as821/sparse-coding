@@ -59,7 +59,7 @@ def plot_color(rf, out_dim, M):
     # rf = rf.T
     # rf = rf.reshape(out_dim, M, M, 3)
 
-    n = 5 # int(np.ceil(np.sqrt(normalized.shape[0])))
+    n = 10 #int(np.ceil(np.sqrt(normalized.shape[0])))
     fig, axes = plt.subplots(nrows=n, ncols=n, sharex=True, sharey=True)
     fig.set_size_inches(10, 10)
     for i in range(min(n * n, normalized.shape[0])):
@@ -100,11 +100,11 @@ def main(args):
     elif args.dataset == "cifar10":
         dset = CIFAR10RandomPatch(args.nsamples, args.patch_sz, args.patch_sz, fpath=args.path)
         basis_shape *= 3
-    dataloader = DataLoader(dset, batch_size=256)
+    dataloader = DataLoader(dset, batch_size=args.batch_sz)
 
 
 
-    basis = nn.Linear(args.dict_sz, basis_shape, bias=False).to(device)
+    basis = nn.Linear(args.dict_sz, basis_shape, bias=False, dtype=torch.float32).to(device)
     with torch.no_grad():
         basis.weight.data = F.normalize(basis.weight.data, dim=0)
     optim = torch.optim.SGD([{'params': basis.weight, "lr": args.lr}])
@@ -136,16 +136,16 @@ def main(args):
 
         vis_dict = {}
         vis_dict['loss'] = running_loss / c
-        print(running_loss / c)
 
 
-        if (e % 5 == 4 and args.wandb) or True:
+        if e % 5 == 4 and args.wandb:
             # plotting
             if args.dataset == "cifar10":
                 fig = plot_color(basis.weight.T.reshape(args.dict_sz, args.patch_sz, args.patch_sz, 3).cpu().data.numpy(), args.dict_sz, args.patch_sz)
             else:
                 fig = plot_rf(basis.weight.T.reshape(args.dict_sz, args.patch_sz, args.patch_sz).cpu().data.numpy(), args.dict_sz, args.patch_sz)
             vis_dict["dict"] = wandb.Image(plt)
+            plt.close()
 
         if args.wandb:
             wandb.log(vis_dict, step=e)
@@ -163,13 +163,14 @@ if __name__ == "__main__":
     parser.add_argument('--path', default="/Users/andrewstange/Desktop/research/sparse-coding/data/cifar10", type=str, help="dataset path")
     parser.add_argument('--ckpt-path', default="", type=str, help="checkpoint directory")
     parser.add_argument('--nsamples', default=20, type=int, help="batch size")
-    parser.add_argument('--dict_sz', default=400, type=int, help="dictionary size")
+    parser.add_argument('--dict_sz', default=512, type=int, help="dictionary size")
     parser.add_argument('--patch_sz', default=10, type=int, help="patch size")
     parser.add_argument('--epoch', default=100, type=int, help="number of epochs")
     parser.add_argument('--lr', default=1e-2, type=float, help="dictionary learning rate")
     parser.add_argument('--alpha', default=5e-3, type=float, help="alpha parameter for FISTA")
     parser.add_argument('--dataset', default='cifar10', choices=['nat', 'cifar10'], help='dataset to use')
     parser.add_argument('--wandb', action="store_true")
+    parser.add_argument('--batch_sz', default=2048, type=int, help="batch size")
 
 
     main(parser.parse_args())
