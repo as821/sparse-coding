@@ -137,7 +137,7 @@ def main(args):
         vis_dict = {}
         vis_dict['loss'] = running_loss / c
 
-        n_activations_per_sample = (pred != 0).to(int).sum(dim=1)
+        n_activations_per_sample = (z != 0).to(int).sum(dim=1)
         vis_dict['max_sample_active'] = n_activations_per_sample.max()
         vis_dict['min_sample_active'] = n_activations_per_sample.min()
         vis_dict['mean_sample_active'] = n_activations_per_sample.float().mean()
