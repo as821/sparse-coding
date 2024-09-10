@@ -88,7 +88,7 @@ def main(args):
         os.mkdir(args.ckpt_path + f"/{timestamp}")
 
     if args.wandb:
-        wandb.init(config={}, project="smt_sc_dict")
+        wandb.init(config=args, project="smt_sc_dict")
 
 
     device = torch.device("cuda" if torch.cuda.is_available() and not c_impl_available() else "cpu")
@@ -107,9 +107,10 @@ def main(args):
     basis = nn.Linear(args.dict_sz, basis_shape, bias=False, dtype=torch.float32).to(device)
     with torch.no_grad():
         basis.weight.data = F.normalize(basis.weight.data, dim=0)
-    optim = torch.optim.SGD([{'params': basis.weight, "lr": args.lr}])
+    optim = torch.optim.Adam([{'params': basis.weight, "lr": args.lr}])
     
     for e in range(args.epoch):
+        vis_dict = {}
         running_loss = 0
         c = 0
         for img_batch in tqdm(dataloader, desc='training', total=len(dataloader)):
@@ -119,8 +120,8 @@ def main(args):
                     assert img_batch.shape[0] % 8 == 0
                     z = fista(img_batch, basis.weight, args.alpha, fista_max_iter)
                 else:
-                    z = FISTA(img_batch, basis.weight, args.alpha, fista_max_iter, 0.01, device)
-            
+                    z, n_iter = FISTA(img_batch, basis.weight, args.alpha, fista_max_iter, args.fista_conv, device, lr=args.fista_lr)
+                    vis_dict['fista_niter'] = n_iter
             pred = basis(z)
 
             loss = ((img_batch - pred) ** 2).sum()
@@ -134,7 +135,6 @@ def main(args):
 
             c += 1
 
-        vis_dict = {}
         vis_dict['loss'] = running_loss / c
 
         n_activations_per_sample = (z != 0).to(int).sum(dim=1)
@@ -172,6 +172,8 @@ if __name__ == "__main__":
     parser.add_argument('--epoch', default=100, type=int, help="number of epochs")
     parser.add_argument('--lr', default=1e-2, type=float, help="dictionary learning rate")
     parser.add_argument('--alpha', default=5e-3, type=float, help="alpha parameter for FISTA")
+    parser.add_argument('--fista_conv', default=0.01, type=float, help="convergence threshold for FISTA")
+    parser.add_argument('--fista_lr', default=0.001, type=float, help="learning rate for FISTA")
     parser.add_argument('--dataset', default='cifar10', choices=['nat', 'cifar10'], help='dataset to use')
     parser.add_argument('--wandb', action="store_true")
     parser.add_argument('--batch_sz', default=2048, type=int, help="batch size")

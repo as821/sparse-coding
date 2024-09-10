@@ -13,7 +13,7 @@ def torch_positive_only(basis, x, z, L_inv, mult):
     return z
 
 
-def FISTA(x, basis, alpha, num_iter, converge_thresh=0.01, device="cpu", batch_sz=256, tqdm_disable=True, lr=0.001):
+def FISTA(x, basis, alpha, num_iter, converge_thresh=0.01, device="cpu", tqdm_disable=True, lr=0.001):
     start_time = time()
     z = torch.zeros((x.shape[0], basis.shape[1]), dtype=basis.dtype, device=device)
     x = x.to(device)
@@ -37,4 +37,4 @@ def FISTA(x, basis, alpha, num_iter, converge_thresh=0.01, device="cpu", batch_s
 
     if not tqdm_disable:
         print(f"FISTA iters: {itr} / {num_iter} in {time() - start_time:.3f}s")
-    return z.to(device)
+    return z.to(device), itr
