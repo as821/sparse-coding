@@ -31,6 +31,8 @@ def FISTA(x, basis, alpha, num_iter, converge_thresh=0.01, device="cpu", tqdm_di
         z_diff = z - prev_z
         y_slc = z + ((tk_prev - 1) / tk) * z_diff
 
+        print(f"py ({itr}): {torch.norm(z_diff)} {torch.norm(prev_z)}")
+
         if torch.norm(z_diff) / torch.norm(prev_z) < converge_thresh and itr > 0:
             break
         prev_z = z.clone()

@@ -45,13 +45,14 @@ class RandomPatchDataset(Dataset):
                 crop = torch.tensor(img[x:x+self.width, y:y+self.height])
                 self.images[counter, :, :] = crop - crop.mean()
                 counter += 1
-        self.images = self.images.img_batch.reshape(img_batch.shape[0], -1)
+        # self.images = self.images.reshape(self.images.shape[0], -1)
 
 class NatPatchDataset(RandomPatchDataset):
     def __init__(self, N:int, width:int, height:int, fpath:str, border:int=4):
         super(NatPatchDataset, self).__init__(N, width, height, fpath, border)
 
     def _get_full_raw_dataset(self):
+
         X = loadmat(self.fpath)
         X = X['IMAGES']
         return X

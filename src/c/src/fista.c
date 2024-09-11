@@ -150,6 +150,14 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
         gettimeofday(&gemm2, NULL);
 
 
+        // for(int idx = 0; idx < dict_sz * n_samples; idx++) {
+        //     printf("\tY (%d): %f\n", idx, Y[idx]);
+        // }
+        // for(int idx = 0; idx < inp_dim * n_samples; idx++) {
+        //     printf("\tres (%d): %f\n", idx, residual[idx]);
+        // }
+
+
         if(SPARSITY_DEBUG) {
             float y_nz = n_nonzero_elements(Y, n_samples * dict_sz);
             printf("\nsparsity: %.2f %.2f %.2f %.2f %.2f\n", x_nz, basis_nz, y_nz_pre, res_nz, y_nz);
@@ -192,6 +200,11 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
         // Frobenius norm can be defined as the L2 norm of the flattened matrix
         float norm_ratio = diff_norm / prev_z_norm;
         norm_ratio = sqrtf(norm_ratio);         // equivalent to sqrtf(diff_norm) / sqrtf(prev_z_norm)
+
+
+        printf("%d: %f %f\n", itr, sqrtf(diff_norm), sqrtf(prev_z_norm));
+
+
 
 
         gettimeofday(&diff, NULL);
