@@ -17,17 +17,17 @@ def main(args):
     dset = NatPatchDataset(args.nsamples, args.patch_sz, args.patch_sz, args.path, 4)
     x = dset.images.flatten(1, 2)
     
-    
+
     # x = x[:1][:5]
     # x = x[:3, :2].contiguous()
-
 
     basis = torch.randn((x.shape[1], args.dict_sz))
     basis = basis / (basis.norm(2,0) + 1e-10)
 
-    lr = 0.01
+
+    lr = 1
     alpha = 0.0
-    niter = 1
+    niter = 10
     thresh = 0.01
     
     fista(x, basis, alpha, niter, thresh, lr)

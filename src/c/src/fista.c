@@ -125,6 +125,12 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
         struct timeval start, mcpy, gemm1, gemm2, ista, diff, logging;
         gettimeofday(&start, NULL);
         
+
+        // for(int idx = 0; idx < dict_sz * n_samples; idx++) {
+        //     printf("\tY pre (%d): %f\n", idx, Y[idx]);
+        // }
+
+
         if(SPARSITY_DEBUG) {
             x_nz = n_nonzero_elements(residual, inp_dim * n_samples);
             basis_nz = n_nonzero_elements(basis, inp_dim * dict_sz);
@@ -146,6 +152,7 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
         // mm = residual @ basis
         // z += L_inv * mm
         cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n_samples, dict_sz, inp_dim, L_inv, residual, inp_dim, basis, dict_sz, 1.0f, Y, dict_sz);
+
 
         gettimeofday(&gemm2, NULL);
 

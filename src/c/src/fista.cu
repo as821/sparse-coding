@@ -105,31 +105,38 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
 
     float tk = 1, tk_prev = 1;
     for(int itr = 0; itr < n_iter; itr++) {
+        
+        // {
+        //     float* Y_host = (float*)malloc(z_sz);
+        //     CHECK_CUDA_NORET(cudaMemcpy((void*)Y_host, Y, z_sz, cudaMemcpyDeviceToHost))
+        //     for(int idx = 0; idx < z_n_el; idx++) {
+        //         printf("\tY pre (%d): %f\n", idx, Y_host[idx]);
+        //     }
+        // }
+        
+        
         // residual = x - (z @ basis.T)
         // cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, n_samples, inp_dim, dict_sz, -1.0f, Y, dict_sz, basis, dict_sz, 1.0f, residual, inp_dim);
         CHECK_CUDA_NORET(cudaMemcpy((void*)residual, X, x_sz, cudaMemcpyDeviceToDevice))
         {
+            // cublas assumes column-major but we have row major
+            // https://i.sstatic.net/IvZPe.png
             float alpha = -1.0f;
             float beta = 1.0f;
-            // CHECK_CUBLAS_NORET(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_T, n_samples, inp_dim, dict_sz, &alpha, Y, CUDA_R_32F, n_samples, basis, CUDA_R_32F, inp_dim, &beta, residual, CUDA_R_32F, n_samples, compute_type, CUBLAS_GEMM_DEFAULT))
-
-            // cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, n_samples, inp_dim, dict_sz, -1.0f, Y, dict_sz, basis, dict_sz, 1.0f, residual, inp_dim);
-            
-            // cublas assumes column-major but we have row major. compute: residual.T = x.T - (basis @ z.T)
-            CHECK_CUBLAS_NORET(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_T, inp_dim, n_samples, dict_sz, &alpha, basis, CUDA_R_32F, inp_dim, Y, CUDA_R_32F, n_samples, &beta, residual, CUDA_R_32F, inp_dim, compute_type, CUBLAS_GEMM_DEFAULT));    
+            CHECK_CUBLAS_NORET(cublasGemmEx(handle, CUBLAS_OP_T, CUBLAS_OP_N, inp_dim, n_samples, dict_sz, &alpha, basis, CUDA_R_32F, inp_dim, Y, CUDA_R_32F, dict_sz, &beta, residual, CUDA_R_32F, inp_dim, compute_type, CUBLAS_GEMM_DEFAULT));    
         }
 
         // mm = residual @ basis
         // z += lr * mm
         // cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n_samples, dict_sz, inp_dim, lr, residual, inp_dim, basis, dict_sz, 1.0f, Y, dict_sz);
         {
+            // cublas assumes column-major but we have row major
+            // https://i.sstatic.net/IvZPe.png
             float beta = 1.0f;
-            // CHECK_CUBLAS_NORET(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, n_samples, dict_sz, inp_dim, &lr, residual, CUDA_R_32F, n_samples, basis, CUDA_R_32F, inp_dim, &beta, Y, CUDA_R_32F, n_samples, compute_type, CUBLAS_GEMM_DEFAULT))
-        
-            // cublas assumes column-major but we have row major. compute: z.T += lr * (basis.T @ residual.T)
             CHECK_CUBLAS_NORET(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, dict_sz, n_samples, inp_dim, &lr, basis, CUDA_R_32F, dict_sz, residual, CUDA_R_32F, inp_dim, &beta, Y, CUDA_R_32F, dict_sz, compute_type, CUBLAS_GEMM_DEFAULT));
-        
         }
+
+
 
         // float* Y_host = (float*)malloc(z_sz);
         // CHECK_CUDA_NORET(cudaMemcpy((void*)Y_host, Y, z_sz, cudaMemcpyDeviceToHost))
