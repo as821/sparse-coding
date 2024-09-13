@@ -64,7 +64,22 @@ __global__ void y_update(size_t n, float* Y, float* z_prev, float alpha_L, float
     atomicAdd(prev_z_norm, thread_local_prev_z_norm);
 }
 
+void print_norm_host(float* arr, size_t sz, const char* str) {
+    double norm = 0;
+    for(int idx = 0; idx < sz; idx++) {
+        norm += (double)arr[idx] * (double)arr[idx];
+    }
+    norm = sqrt(norm);
+    printf("%s: %f\n", str, norm);
+}
 
+void print_norm(float* arr_dev, size_t sz, const char* str) {
+    float* arr = (float*)malloc(sz * sizeof(float));
+    CHECK(arr);
+    CHECK_CUDA_NORET(cudaMemcpy((void*)arr, arr_dev, sz * sizeof(float), cudaMemcpyDeviceToHost))
+    print_norm_host(arr, sz, str);
+    free(arr);
+}
 
 extern "C" {
 void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __restrict__ Z_host, int n_samples, int inp_dim, int dict_sz, float lr, float alpha_L, int n_iter, float converge_thresh) {
@@ -82,13 +97,14 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
     cublasComputeType_t compute_type = CUBLAS_COMPUTE_32F_PEDANTIC;
 
     float *X, *basis;
-    size_t x_sz = n_samples * inp_dim * sizeof(float);
+    size_t x_n_el = n_samples * inp_dim;
+    size_t x_sz = x_n_el * sizeof(float);
     size_t basis_sz = inp_dim * dict_sz * sizeof(float);
     CHECK_CUDA_NORET(cudaMalloc((void**)&X, x_sz))
     CHECK_CUDA_NORET(cudaMalloc((void**)&basis, basis_sz))
     CHECK_CUDA_NORET(cudaMemcpy((void*)X, X_host, x_sz, cudaMemcpyHostToDevice))
     CHECK_CUDA_NORET(cudaMemcpy((void*)basis, basis_host, basis_sz, cudaMemcpyHostToDevice))
-    
+
     float *residual, *z_prev, *Y;
     size_t z_n_el = dict_sz * n_samples;
     size_t z_sz = z_n_el * sizeof(float);
@@ -123,7 +139,7 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
             // https://i.sstatic.net/IvZPe.png
             float alpha = -1.0f;
             float beta = 1.0f;
-            CHECK_CUBLAS_NORET(cublasGemmEx(handle, CUBLAS_OP_T, CUBLAS_OP_N, inp_dim, n_samples, dict_sz, &alpha, basis, CUDA_R_32F, inp_dim, Y, CUDA_R_32F, dict_sz, &beta, residual, CUDA_R_32F, inp_dim, compute_type, CUBLAS_GEMM_DEFAULT));    
+            CHECK_CUBLAS_NORET(cublasGemmEx(handle, CUBLAS_OP_T, CUBLAS_OP_N, inp_dim, n_samples, dict_sz, &alpha, basis, CUDA_R_32F, dict_sz, Y, CUDA_R_32F, dict_sz, &beta, residual, CUDA_R_32F, inp_dim, compute_type, CUBLAS_GEMM_DEFAULT));    
         }
 
         // mm = residual @ basis

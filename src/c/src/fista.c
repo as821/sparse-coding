@@ -96,6 +96,16 @@ void matrix_transpose(float* src, float* dst, int M, int N) {
     }
 }
 
+void print_norm(float* arr, size_t sz, const char* str) {
+    double norm = 0;
+    for(int idx = 0; idx < sz; idx++) {
+        norm += (double)arr[idx] * (double)arr[idx];
+    }
+    norm = sqrt(norm);
+    printf("%s: %f\n", str, norm);
+}
+
+
 void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__ Z, int n_samples, int inp_dim, int dict_sz, float L_inv, float alpha_L, int n_iter, float converge_thresh) {
     CHECK(X);
     CHECK(basis);

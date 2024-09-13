@@ -30,9 +30,10 @@ def main(args):
     niter = 10
     thresh = 0.01
     
-    fista(x, basis, alpha, niter, thresh, lr)
     c_res = cu_fista(x, basis, alpha, niter, thresh, lr)
-    
+    print("\n\n")
+    fista(x, basis, alpha, niter, thresh, lr)
+    print("\n\n")
 
     if args.comparison:
         device = "cuda" if torch.cuda.is_available() else "cpu"
