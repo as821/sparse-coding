@@ -219,7 +219,7 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
         norm_ratio = sqrtf(norm_ratio);         // equivalent to sqrtf(diff_norm) / sqrtf(prev_z_norm)
 
 
-        printf("%d: %f %f\n", itr, sqrtf(diff_norm), sqrtf(prev_z_norm));
+        // printf("%d: %f %f\n", itr, sqrtf(diff_norm), sqrtf(prev_z_norm));
 
 
 

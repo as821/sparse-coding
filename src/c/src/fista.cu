@@ -186,9 +186,9 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
         norm_ratio = sqrtf(norm_ratio);         // equivalent to sqrtf(diff_norm) / sqrtf(prev_z_norm)
 
 
-        printf("%d: %f %f\n", itr, sqrtf(diff_norm), sqrtf(prev_z_norm));
-        // printf("\33[2K\r%d / %d", itr, n_iter);
-        // fflush(stdout);
+        // printf("%d: %f %f\n", itr, sqrtf(diff_norm), sqrtf(prev_z_norm));
+        printf("\33[2K\r%d / %d", itr, n_iter);
+        fflush(stdout);
 
 
 
