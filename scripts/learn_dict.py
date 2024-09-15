@@ -18,7 +18,7 @@ sys.path.append(os.path.join(os.getcwd(), 'src/c'))
 
 
 from dataset import NatPatchDataset, CIFAR10RandomPatch
-from cinterface import fista, c_impl_available
+from cinterface import cu_fista, fista, c_impl_available
 from baseline import FISTA
 
 
@@ -117,8 +117,13 @@ def main(args):
             img_batch = img_batch.to(device)
             with torch.no_grad():            
                 if c_impl_available():
-                    assert img_batch.shape[0] % 8 == 0
-                    z = fista(img_batch, basis.weight, args.alpha, fista_max_iter)
+                    z, n_iter, _ = cu_fista(img_batch, basis.weight, args.alpha, fista_max_iter, args.fista_conv, args.fista_lr)
+                
+                    # TODO(as): debugging
+                    foo = basis.weight.clone()
+                    z_gt, n_iter_gt = FISTA(img_batch.clone().to("cuda"), foo.to("cuda"), args.alpha, fista_max_iter, args.fista_conv, "cuda", lr=args.fista_lr)
+                    assert n_iter == n_iter_gt, f"{n_iter} != {n_iter_gt}"
+                    assert np.all(np.abs(z_gt.cpu().numpy() - z.numpy()) < 0.1), f"{np.abs(z_gt.cpu().numpy() - z.numpy()).max()} >= 0.1"
                 else:
                     z, n_iter = FISTA(img_batch, basis.weight, args.alpha, fista_max_iter, args.fista_conv, device, lr=args.fista_lr)
                     vis_dict['fista_niter'] = n_iter

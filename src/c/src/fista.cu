@@ -119,7 +119,7 @@ void log_time_diff(char* msg, struct timeval* start, struct timeval* stop) {
 
 
 extern "C" {
-void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __restrict__ Z_host, int n_samples, int inp_dim, int dict_sz, float lr, float alpha_L, int n_iter, float converge_thresh) {
+int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __restrict__ Z_host, int n_samples, int inp_dim, int dict_sz, float lr, float alpha_L, int n_iter, float converge_thresh) {
     CHECK(X_host);
     CHECK(basis_host);
     CHECK(Z_host);
@@ -171,7 +171,8 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
     gettimeofday(&init, NULL);
 
     float tk = 1, tk_prev = 1;
-    for(int itr = 0; itr < n_iter; itr++) {
+    int itr;
+    for(itr = 0; itr < n_iter; itr++) {
 
         cudaEvent_t start, blas, k_start, k_exec, k_end;
         cudaEventCreate(&start);
@@ -264,6 +265,7 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
     log_time_diff("\n\n\thandle", &actual_start, &handle_time);
     log_time_diff("\tinit", &handle_time, &init);
     log_time_diff("\texec", &init, &exec);
+    return itr;
 }
 }
 

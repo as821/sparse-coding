@@ -106,7 +106,7 @@ void print_norm(float* arr, size_t sz, const char* str) {
 }
 
 
-void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__ Z, int n_samples, int inp_dim, int dict_sz, float L_inv, float alpha_L, int n_iter, float converge_thresh) {
+int fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__ Z, int n_samples, int inp_dim, int dict_sz, float L_inv, float alpha_L, int n_iter, float converge_thresh) {
     CHECK(X);
     CHECK(basis);
     CHECK(Z);
@@ -131,7 +131,8 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
 
     float tk = 1, tk_prev = 1;
     float x_nz, basis_nz, y_nz_pre, res_nz;
-    for(int itr = 0; itr < n_iter; itr++) {
+    int itr;
+    for(itr = 0; itr < n_iter; itr++) {
         struct timeval start, mcpy, gemm1, gemm2, ista, diff, logging;
         gettimeofday(&start, NULL);
         
@@ -248,6 +249,7 @@ void fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__
     free(residual);
     free(z_prev);
     free(Y);
+    return itr;
 }
 
 

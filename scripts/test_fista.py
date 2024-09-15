@@ -25,15 +25,15 @@ def main(args):
     basis = basis / (basis.norm(2,0) + 1e-10)
 
 
-    lr = 0.001
+    lr = 0.01
     alpha = 0.01
-    niter = 1000
+    niter = 10000
     thresh = 0.01
     
-    n_test = 15
+    n_test = 10
     res = np.zeros(shape=(n_test,))
     for idx in range(n_test):
-        c_res, T = cu_fista(x, basis, alpha, niter, thresh, lr)
+        c_res, n_iter, T = cu_fista(x, basis, alpha, niter, thresh, lr)
         res[idx] = T
         print("\n\n")
     # fista(x, basis, alpha, niter, thresh, lr)
