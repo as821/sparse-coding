@@ -51,7 +51,7 @@ __global__ void y_update(size_t n, float* Y, float* z_prev, float alpha_L, float
     
     // NOTE(as): 2 read + 2 writes per iteration (assuming thread local var are cached properly)
     for(int idx = index; idx < n; idx += stride) {
-        float Y_val = Y[idx] < alpha_L ? 0 : Y[idx] - alpha_L;
+        float Y_val = Y[idx] < alpha_L ? 0.0f : Y[idx] - alpha_L;
 
         float Y_prev = z_prev[idx];
         z_prev[idx] = Y_val;
@@ -110,19 +110,33 @@ void cuda_log_time_diff(char* msg, cudaEvent_t* start, cudaEvent_t* stop) {
     printf("%s: %f\n", msg, milli);
 }
 
+void log_time_diff(char* msg, struct timeval* start, struct timeval* stop) {
+    double start_ms = (((double)start->tv_sec)*1000)+(((double)start->tv_usec)/1000);
+    double stop_ms = (((double)stop->tv_sec)*1000)+(((double)stop->tv_usec)/1000);
+    double diff_in_sec = (stop_ms - start_ms)/1000;
+    printf("%s: %f\n", msg, diff_in_sec);
+}
+
+
 extern "C" {
 void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __restrict__ Z_host, int n_samples, int inp_dim, int dict_sz, float lr, float alpha_L, int n_iter, float converge_thresh) {
     CHECK(X_host);
     CHECK(basis_host);
     CHECK(Z_host);
 
+    struct timeval actual_start, handle_time, init, exec;
+    gettimeofday(&actual_start, NULL);
+
+
     // X: n_samples x inp_dim
     // basis: inp_dim x dict_sz
     // Z: n_samples x dict_sz
 
-    // TODO(as): lazy loading an option if this is slow?
+    // TODO(as): (very) slow the first time it is called in a process...
     cublasHandle_t handle;
     cublasCreate(&handle);
+
+    gettimeofday(&handle_time, NULL);
 
 
     // TODO(as): bunch of faster + less precise BLAS options here https://docs.nvidia.com/cuda/cublas/#cublasoperation-t
@@ -153,6 +167,8 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
     float* norms;
     size_t norm_sz = 2 * sizeof(float);
     CHECK_CUDA_NORET(cudaMalloc((void**)&norms, norm_sz))
+
+    gettimeofday(&init, NULL);
 
     float tk = 1, tk_prev = 1;
     for(int itr = 0; itr < n_iter; itr++) {
@@ -240,6 +256,14 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
     CHECK_CUDA_NORET(cudaFree(basis))
 
     cublasDestroy(handle);
+
+
+    gettimeofday(&exec, NULL);
+
+
+    log_time_diff("\n\n\thandle", &actual_start, &handle_time);
+    log_time_diff("\tinit", &handle_time, &init);
+    log_time_diff("\texec", &init, &exec);
 }
 }
 
