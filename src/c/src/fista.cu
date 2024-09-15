@@ -103,6 +103,13 @@ void print_norm(float* arr_dev, size_t sz, const char* str) {
     free(arr);
 }
 
+void cuda_log_time_diff(char* msg, cudaEvent_t* start, cudaEvent_t* stop) {
+    float milli = 0;
+    cudaEventElapsedTime(&milli, *start, *stop);
+    milli /= 1000;      // ms -> s
+    printf("%s: %f\n", msg, milli);
+}
+
 extern "C" {
 void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __restrict__ Z_host, int n_samples, int inp_dim, int dict_sz, float lr, float alpha_L, int n_iter, float converge_thresh) {
     CHECK(X_host);
@@ -113,11 +120,17 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
     // basis: inp_dim x dict_sz
     // Z: n_samples x dict_sz
 
+    // TODO(as): lazy loading an option if this is slow?
     cublasHandle_t handle;
     cublasCreate(&handle);
 
+
+    // TODO(as): bunch of faster + less precise BLAS options here https://docs.nvidia.com/cuda/cublas/#cublasoperation-t
+    // TODO(as): CUTLASS? https://github.com/NVIDIA/cutlass/blob/main/examples/45_dual_gemm/dual_gemm.cu
     cublasComputeType_t compute_type = CUBLAS_COMPUTE_32F_PEDANTIC;
 
+
+    // TODO(as): page locking + async transfers. ways to move these calls outside of this function so not called on each iteration?
     float *X, *basis;
     size_t x_n_el = n_samples * inp_dim;
     size_t x_sz = x_n_el * sizeof(float);
@@ -143,18 +156,16 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
 
     float tk = 1, tk_prev = 1;
     for(int itr = 0; itr < n_iter; itr++) {
-        
-        // {
-        //     float* Y_host = (float*)malloc(z_sz);
-        //     CHECK_CUDA_NORET(cudaMemcpy((void*)Y_host, Y, z_sz, cudaMemcpyDeviceToHost))
-        //     for(int idx = 0; idx < z_n_el; idx++) {
-        //         printf("\tY pre (%d): %f\n", idx, Y_host[idx]);
-        //     }
-        // }
-        
-        
+
+        cudaEvent_t start, blas, k_start, k_exec, k_end;
+        cudaEventCreate(&start);
+        cudaEventCreate(&blas);
+        cudaEventCreate(&k_start);
+        cudaEventCreate(&k_exec);
+        cudaEventCreate(&k_end);
+        cudaEventRecord(start);
+
         // residual = x - (z @ basis.T)
-        // cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, n_samples, inp_dim, dict_sz, -1.0f, Y, dict_sz, basis, dict_sz, 1.0f, residual, inp_dim);
         CHECK_CUDA_NORET(cudaMemcpy((void*)residual, X, x_sz, cudaMemcpyDeviceToDevice))
         {
             // cublas assumes column-major but we have row major
@@ -166,7 +177,6 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
 
         // mm = residual @ basis
         // z += lr * mm
-        // cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, n_samples, dict_sz, inp_dim, lr, residual, inp_dim, basis, dict_sz, 1.0f, Y, dict_sz);
         {
             // cublas assumes column-major but we have row major
             // https://i.sstatic.net/IvZPe.png
@@ -174,32 +184,22 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
             CHECK_CUBLAS_NORET(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, dict_sz, n_samples, inp_dim, &lr, basis, CUDA_R_32F, dict_sz, residual, CUDA_R_32F, inp_dim, &beta, Y, CUDA_R_32F, dict_sz, compute_type, CUBLAS_GEMM_DEFAULT));
         }
 
-
-
-        // float* Y_host = (float*)malloc(z_sz);
-        // CHECK_CUDA_NORET(cudaMemcpy((void*)Y_host, Y, z_sz, cudaMemcpyDeviceToHost))
-        // for(int idx = 0; idx < z_n_el; idx++) {
-        //     printf("\tY (%d): %f\n", idx, Y_host[idx]);
-        // }
-
-        // float* res_host = (float*)malloc(x_sz);
-        // CHECK_CUDA_NORET(cudaMemcpy((void*)res_host, residual, x_sz, cudaMemcpyDeviceToHost))
-        // for(int idx = 0; idx < inp_dim * n_samples; idx++) {
-        //     printf("\tres (%d): %f\n", idx, res_host[idx]);
-        // }
-
+        cudaEventRecord(blas);
 
         // Y-update multiplier
         tk_prev = tk;
         tk = (1 + sqrtf(1 + 4 * tk * tk)) / 2;
         float mlt = (tk_prev - 1) / tk;
         CHECK_CUDA_NORET(cudaMemset(norms, 0, norm_sz))
+        cudaEventRecord(k_start);
         
-        int block_sz = 256;         // TODO(as) look up threads per block for 4090?
+        int block_sz = 256;
         int n_blocks = (z_n_el + block_sz - 1) / block_sz;       // ceil(z_n_el / block_sz)
         int smem_sz = 2 * block_sz * sizeof(float);
         y_update<<<n_blocks, block_sz, smem_sz>>>(z_n_el, Y, z_prev, alpha_L, mlt, norms, &norms[1]);
-        CHECK_CUDA_NORET(cudaDeviceSynchronize());
+        // CHECK_CUDA_NORET(cudaDeviceSynchronize());
+        cudaEventRecord(k_exec);
+
         CHECK_CUDA_NORET(cudaMemcpy((void*)norms_host, norms, norm_sz, cudaMemcpyDeviceToHost))
 
         // Frobenius norm can be defined as the L2 norm of the flattened matrix
@@ -207,6 +207,7 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
         float prev_z_norm = norms_host[1];
         float norm_ratio = diff_norm / prev_z_norm;
         norm_ratio = sqrtf(norm_ratio);         // equivalent to sqrtf(diff_norm) / sqrtf(prev_z_norm)
+        cudaEventRecord(k_end);
 
 
         // printf("%d: %f %f\n", itr, sqrtf(diff_norm), sqrtf(prev_z_norm));
@@ -214,6 +215,14 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
         fflush(stdout);
 
 
+        cudaEventSynchronize(k_end);
+        cuda_log_time_diff("\n\tblas", &start, &blas);
+        cuda_log_time_diff("\tk_start", &blas, &k_start);
+        cuda_log_time_diff("\tk_exec", &k_start, &k_exec);
+        cuda_log_time_diff("\tk_end", &k_exec, &k_end);
+        float milli = 0;
+        cudaEventElapsedTime(&milli, k_start, k_exec);
+        printf("\tbandwidth: %f (GB/s)\n", z_sz * 4 / milli / 1e6);     // 2 read + 2 write per iteration   
 
         if(itr != 0 && norm_ratio < converge_thresh)
             break;
