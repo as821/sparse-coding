@@ -25,9 +25,9 @@ def main(args):
     basis = basis / (basis.norm(2,0) + 1e-10)
 
 
-    lr = 1
-    alpha = 0.0
-    niter = 10
+    lr = 0.001
+    alpha = 0.01
+    niter = 1000
     thresh = 0.01
     
     c_res = cu_fista(x, basis, alpha, niter, thresh, lr)

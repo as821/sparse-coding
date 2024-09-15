@@ -42,27 +42,65 @@ void print_stack_trace();
 }
 
 __global__ void y_update(size_t n, float* Y, float* z_prev, float alpha_L, float mlt, float* diff_norm, float* prev_z_norm) {
-    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    int tid = threadIdx.x;
+    int index = blockIdx.x * blockDim.x + tid;
     int stride = blockDim.x * gridDim.x;
     
     float thread_local_diff_norm = 0;
     float thread_local_prev_z_norm = 0;
     
+    // NOTE(as): 2 read + 2 writes per iteration (assuming thread local var are cached properly)
     for(int idx = index; idx < n; idx += stride) {
-        Y[idx] = Y[idx] < alpha_L ? 0 : Y[idx] - alpha_L;       // TODO(as) make sure nvcc uses a vector blend rather than branch here?
-        float diff = Y[idx] - z_prev[idx];
-        
+        float Y_val = Y[idx] < alpha_L ? 0 : Y[idx] - alpha_L;
+
+        float Y_prev = z_prev[idx];
+        z_prev[idx] = Y_val;
+        thread_local_prev_z_norm += Y_prev * Y_prev;
+
+        float diff = Y_val - Y_prev;
         thread_local_diff_norm += diff * diff;
-        thread_local_prev_z_norm += z_prev[idx] * z_prev[idx];
         
-        z_prev[idx] = Y[idx];
-        Y[idx] += mlt * diff;
+        Y_val += mlt * diff;
+        Y[idx] = Y_val;
     }
 
-    // synchronize access to shared result variables
-    atomicAdd(diff_norm, thread_local_diff_norm);
-    atomicAdd(prev_z_norm, thread_local_prev_z_norm);
+    extern __shared__ float shmem[];
+    float* shared_diff_norm = shmem;
+    float* shared_prev_z_norm = &shmem[blockDim.x];
+
+    // tree-based reduction of thread-local norm values for all threads in the block
+    shared_diff_norm[tid] = thread_local_diff_norm;
+    shared_prev_z_norm[tid] = thread_local_prev_z_norm;
+    __syncthreads();
+
+    for (int s = blockDim.x / 2; s > 0; s /= 2) {
+        if (tid < s) {
+            shared_diff_norm[tid] += shared_diff_norm[tid + s];
+            shared_prev_z_norm[tid] += shared_prev_z_norm[tid + s];
+        }
+        __syncthreads();
+    }
+    if (tid == 0) {
+        atomicAdd(diff_norm, shared_diff_norm[0]);
+        atomicAdd(prev_z_norm, shared_prev_z_norm[0]);
+    }
 }
+
+void log_time_diff(char* msg, struct timeval* start, struct timeval* stop) {
+    double start_ms = (((double)start->tv_sec)*1000)+(((double)start->tv_usec)/1000);
+    double stop_ms = (((double)stop->tv_sec)*1000)+(((double)stop->tv_usec)/1000);
+    double diff_in_sec = (stop_ms - start_ms)/1000;
+
+    printf("%s: %f\n", msg, diff_in_sec);
+}
+
+void cuda_log_time_diff(char* msg, cudaEvent_t* start, cudaEvent_t* stop) {
+    float milli = 0;
+    cudaEventElapsedTime(&milli, *start, *stop);
+    milli /= 1000;      // ms -> s
+    printf("%s: %f\n", msg, milli);
+}
+
 
 void print_norm_host(float* arr, size_t sz, const char* str) {
     double norm = 0;
@@ -91,11 +129,17 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
     // basis: inp_dim x dict_sz
     // Z: n_samples x dict_sz
 
+
+    // TODO(as): lazy loading an option if this is slow?
     cublasHandle_t handle;
     cublasCreate(&handle);
 
-    cublasComputeType_t compute_type = CUBLAS_COMPUTE_32F_PEDANTIC;
+    // TODO(as): bunch of faster + less precise BLAS options here https://docs.nvidia.com/cuda/cublas/#cublasoperation-t
+    // TODO(as): CUTLASS? https://github.com/NVIDIA/cutlass/blob/main/examples/45_dual_gemm/dual_gemm.cu
+    cublasComputeType_t compute_type = CUBLAS_COMPUTE_32F;
 
+
+    // TODO(as): page locking + async transfers. ways to move these calls outside of this function so not called on each iteration?
     float *X, *basis;
     size_t x_n_el = n_samples * inp_dim;
     size_t x_sz = x_n_el * sizeof(float);
@@ -121,16 +165,18 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
 
     float tk = 1, tk_prev = 1;
     for(int itr = 0; itr < n_iter; itr++) {
-        
-        // {
-        //     float* Y_host = (float*)malloc(z_sz);
-        //     CHECK_CUDA_NORET(cudaMemcpy((void*)Y_host, Y, z_sz, cudaMemcpyDeviceToHost))
-        //     for(int idx = 0; idx < z_n_el; idx++) {
-        //         printf("\tY pre (%d): %f\n", idx, Y_host[idx]);
-        //     }
-        // }
-        
-        
+        // struct timeval start, blas, k_start, k_exec, k_end;
+        // gettimeofday(&start, NULL);
+
+        cudaEvent_t start, blas, k_start, k_exec, k_end;
+        cudaEventCreate(&start);
+        cudaEventCreate(&blas);
+        cudaEventCreate(&k_start);
+        cudaEventCreate(&k_exec);
+        cudaEventCreate(&k_end);
+
+        cudaEventRecord(start);
+
         // residual = x - (z @ basis.T)
         // cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, n_samples, inp_dim, dict_sz, -1.0f, Y, dict_sz, basis, dict_sz, 1.0f, residual, inp_dim);
         CHECK_CUDA_NORET(cudaMemcpy((void*)residual, X, x_sz, cudaMemcpyDeviceToDevice))
@@ -152,32 +198,25 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
             CHECK_CUBLAS_NORET(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, dict_sz, n_samples, inp_dim, &lr, basis, CUDA_R_32F, dict_sz, residual, CUDA_R_32F, inp_dim, &beta, Y, CUDA_R_32F, dict_sz, compute_type, CUBLAS_GEMM_DEFAULT));
         }
 
-
-
-        // float* Y_host = (float*)malloc(z_sz);
-        // CHECK_CUDA_NORET(cudaMemcpy((void*)Y_host, Y, z_sz, cudaMemcpyDeviceToHost))
-        // for(int idx = 0; idx < z_n_el; idx++) {
-        //     printf("\tY (%d): %f\n", idx, Y_host[idx]);
-        // }
-
-        // float* res_host = (float*)malloc(x_sz);
-        // CHECK_CUDA_NORET(cudaMemcpy((void*)res_host, residual, x_sz, cudaMemcpyDeviceToHost))
-        // for(int idx = 0; idx < inp_dim * n_samples; idx++) {
-        //     printf("\tres (%d): %f\n", idx, res_host[idx]);
-        // }
-
-
+        // TODO(as) is cublasGemmEx or do we need synchronization? should be ok regardless since all on the same stream?
+        cudaEventRecord(blas);
+        
         // Y-update multiplier
         tk_prev = tk;
         tk = (1 + sqrtf(1 + 4 * tk * tk)) / 2;
         float mlt = (tk_prev - 1) / tk;
-        CHECK_CUDA_NORET(cudaMemset(norms, 0, norm_sz))
-        
-        int block_sz = 256;         // TODO(as) look up threads per block for 4090?
+        // CHECK_CUDA_NORET(cudaMemset(norms, 0, norm_sz))
+        cudaEventRecord(k_start);
+
+        int block_sz = 256;
         int n_blocks = (z_n_el + block_sz - 1) / block_sz;       // ceil(z_n_el / block_sz)
-        y_update<<<n_blocks, block_sz>>>(z_n_el, Y, z_prev, alpha_L, mlt, norms, &norms[1]);
-        CHECK_CUDA_NORET(cudaDeviceSynchronize());
+        int smem_sz = 2 * block_sz * sizeof(float);
+        y_update<<<n_blocks, block_sz, smem_sz>>>(z_n_el, Y, z_prev, alpha_L, mlt, norms, &norms[1]);
+        cudaEventRecord(k_exec);
+
+        // NOTE: explicit synchronization not needed here since memcpy will synchronize implicitly
         CHECK_CUDA_NORET(cudaMemcpy((void*)norms_host, norms, norm_sz, cudaMemcpyDeviceToHost))
+
 
         // Frobenius norm can be defined as the L2 norm of the flattened matrix
         float diff_norm = norms_host[0];
@@ -185,10 +224,23 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
         float norm_ratio = diff_norm / prev_z_norm;
         norm_ratio = sqrtf(norm_ratio);         // equivalent to sqrtf(diff_norm) / sqrtf(prev_z_norm)
 
+        cudaEventRecord(k_end);
+
 
         // printf("%d: %f %f\n", itr, sqrtf(diff_norm), sqrtf(prev_z_norm));
         printf("\33[2K\r%d / %d", itr, n_iter);
         fflush(stdout);
+
+        cudaEventSynchronize(k_end);
+        cuda_log_time_diff("\n\tblas", &start, &blas);
+        cuda_log_time_diff("\tk_start", &blas, &k_start);
+        cuda_log_time_diff("\tk_exec", &k_start, &k_exec);
+        cuda_log_time_diff("\tk_end", &k_exec, &k_end);
+
+
+        float milli = 0;
+        cudaEventElapsedTime(&milli, k_start, k_exec);
+        printf("\tbandwidth: %f (GB/s)\n", z_sz * 4 / milli / 1e6);     // 2 read + 2 write per iteration
 
 
 
