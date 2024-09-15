@@ -30,10 +30,17 @@ def main(args):
     niter = 1000
     thresh = 0.01
     
-    c_res = cu_fista(x, basis, alpha, niter, thresh, lr)
-    print("\n\n")
-    fista(x, basis, alpha, niter, thresh, lr)
-    print("\n\n")
+    n_test = 15
+    res = np.zeros(shape=(n_test,))
+    for idx in range(n_test):
+        c_res, T = cu_fista(x, basis, alpha, niter, thresh, lr)
+        res[idx] = T
+        print("\n\n")
+    # fista(x, basis, alpha, niter, thresh, lr)
+    # print("\n\n")
+
+
+    print(f"\n\nFINAL: {res.sum():.4f} ({res.mean():.4f} {res.std():.4f} {res.max():.4f} {res.min():.4f})")
 
     if args.comparison:
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -46,7 +53,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--path', default="/Users/andrewstange/Desktop/research/sparse-coding/data/IMAGES.mat", type=str, help="dataset path")
     parser.add_argument('--patch_sz', default=10, type=int, help="patch size")
-    parser.add_argument('--nsamples', default=2000, type=int, help="batch size")
+    parser.add_argument('--nsamples', default=20000, type=int, help="batch size")
     parser.add_argument('--dict_sz', default=128, type=int, help="dictionary size")
     parser.add_argument('--comparison', action="store_true", help="check correctness of C implementation")
 

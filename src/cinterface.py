@@ -69,4 +69,4 @@ def cu_fista(x, basis, alpha, n_iter, converge_thresh=0.01, lr=0.01):
     end = time()
 
     print(f"FISTA: {end - start:.3f}s")
-    return z
+    return z, end - start

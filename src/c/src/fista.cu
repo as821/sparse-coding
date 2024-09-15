@@ -73,7 +73,8 @@ __global__ void y_update(size_t n, float* Y, float* z_prev, float alpha_L, float
     shared_prev_z_norm[tid] = thread_local_prev_z_norm;
     __syncthreads();
 
-    for (int s = blockDim.x / 2; s > 0; s /= 2) {
+    // https://developer.download.nvidia.com/compute/cuda/1.1-Beta/x86_website/projects/reduction/doc/reduction.pdf
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
         if (tid < s) {
             shared_diff_norm[tid] += shared_diff_norm[tid + s];
             shared_prev_z_norm[tid] += shared_prev_z_norm[tid + s];
