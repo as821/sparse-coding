@@ -9,6 +9,7 @@
 
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
+#include <cuda_fp16.h>
 
 
 void print_stack_trace();
@@ -41,7 +42,21 @@ void print_stack_trace();
     }                                                                           \
 }
 
-__global__ void y_update(size_t n, float* Y, float* z_prev, float alpha_L, float mlt, float* diff_norm, float* prev_z_norm) {
+__global__ void f32_to_f16(float* input, __half* output, int size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        output[idx] = __float2half(input[idx]);
+    }
+}
+
+__global__ void f16_to_f32(__half* input, float* output, int size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        output[idx] = __half2float(input[idx]);
+    }
+}
+
+__global__ void y_update(size_t n, __half* Y, __half* z_prev, __half alpha_L, __half mlt, float* diff_norm, float* prev_z_norm) {
     int tid = threadIdx.x;
     int index = blockIdx.x * blockDim.x + tid;
     int stride = blockDim.x * gridDim.x;
@@ -51,14 +66,14 @@ __global__ void y_update(size_t n, float* Y, float* z_prev, float alpha_L, float
     
     // NOTE(as): 2 read + 2 writes per iteration (assuming thread local var are cached properly)
     for(int idx = index; idx < n; idx += stride) {
-        float Y_val = Y[idx] < alpha_L ? 0 : Y[idx] - alpha_L;
+        __half Y_val = Y[idx] < alpha_L ? __float2half(0.0f) : Y[idx] - alpha_L;
 
-        float Y_prev = z_prev[idx];
+        __half Y_prev = z_prev[idx];
         z_prev[idx] = Y_val;
-        thread_local_prev_z_norm += Y_prev * Y_prev;
+        thread_local_prev_z_norm += __half2float(Y_prev) * __half2float(Y_prev);
 
-        float diff = Y_val - Y_prev;
-        thread_local_diff_norm += diff * diff;
+        __half diff = Y_val - Y_prev;
+        thread_local_diff_norm += __half2float(diff) * __half2float(diff);
         
         Y_val += mlt * diff;
         Y[idx] = Y_val;
@@ -120,29 +135,40 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
     // basis: inp_dim x dict_sz
     // Z: n_samples x dict_sz
 
-    // TODO(as): lazy loading an option if this is slow?
-    cublasHandle_t handle;
-    cublasCreate(&handle);
-
-
-    // TODO(as): bunch of faster + less precise BLAS options here https://docs.nvidia.com/cuda/cublas/#cublasoperation-t
-    // TODO(as): CUTLASS? https://github.com/NVIDIA/cutlass/blob/main/examples/45_dual_gemm/dual_gemm.cu
-    cublasComputeType_t compute_type = CUBLAS_COMPUTE_32F_PEDANTIC;
-
 
     // TODO(as): page locking + async transfers. ways to move these calls outside of this function so not called on each iteration?
-    float *X, *basis;
+    float *X_float, *basis_float;
     size_t x_n_el = n_samples * inp_dim;
-    size_t x_sz = x_n_el * sizeof(float);
-    size_t basis_sz = inp_dim * dict_sz * sizeof(float);
+    size_t x_sz_float = x_n_el * sizeof(float);
+    size_t basis_n_el = inp_dim * dict_sz;
+    size_t basis_sz_float = basis_n_el * sizeof(float);
+    CHECK_CUDA_NORET(cudaMalloc((void**)&X_float, x_sz_float))
+    CHECK_CUDA_NORET(cudaMalloc((void**)&basis_float, basis_sz_float))
+    CHECK_CUDA_NORET(cudaMemcpy((void*)X_float, X_host, x_sz_float, cudaMemcpyHostToDevice))
+    CHECK_CUDA_NORET(cudaMemcpy((void*)basis_float, basis_host, basis_sz_float, cudaMemcpyHostToDevice))
+
+    __half *X, *basis;
+    size_t x_sz = x_n_el * sizeof(__half);
+    size_t basis_sz = basis_n_el * sizeof(__half);
     CHECK_CUDA_NORET(cudaMalloc((void**)&X, x_sz))
     CHECK_CUDA_NORET(cudaMalloc((void**)&basis, basis_sz))
-    CHECK_CUDA_NORET(cudaMemcpy((void*)X, X_host, x_sz, cudaMemcpyHostToDevice))
-    CHECK_CUDA_NORET(cudaMemcpy((void*)basis, basis_host, basis_sz, cudaMemcpyHostToDevice))
 
-    float *residual, *z_prev, *Y;
+    {
+        int block_sz = 256;
+        int grid_sz = (x_n_el + block_sz - 1) / block_sz;
+        f32_to_f16<<<grid_sz, block_sz>>>(X_float, X, x_n_el);
+
+        grid_sz = (basis_n_el + block_sz - 1) / block_sz;
+        f32_to_f16<<<grid_sz, block_sz>>>(basis_float, basis, basis_n_el);
+    }
+
+    CHECK_CUDA_NORET(cudaFree(X_float))
+    CHECK_CUDA_NORET(cudaFree(basis_float))
+
+
+    __half *residual, *z_prev, *Y;
     size_t z_n_el = dict_sz * n_samples;
-    size_t z_sz = z_n_el * sizeof(float);
+    size_t z_sz = z_n_el * sizeof(__half);
     CHECK_CUDA_NORET(cudaMalloc((void**)&residual, x_sz))
     CHECK_CUDA_NORET(cudaMalloc((void**)&z_prev, z_sz))
     CHECK_CUDA_NORET(cudaMalloc((void**)&Y, z_sz))
@@ -153,6 +179,14 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
     float* norms;
     size_t norm_sz = 2 * sizeof(float);
     CHECK_CUDA_NORET(cudaMalloc((void**)&norms, norm_sz))
+
+    // TODO(as): lazy loading an option if this is slow?
+    cublasHandle_t handle;
+    cublasCreate(&handle);
+
+    // TODO(as): bunch of faster + less precise BLAS options here https://docs.nvidia.com/cuda/cublas/#cublasoperation-t
+    // TODO(as): CUTLASS? https://github.com/NVIDIA/cutlass/blob/main/examples/45_dual_gemm/dual_gemm.cu
+    cublasComputeType_t compute_type = CUBLAS_COMPUTE_32F;
 
     float tk = 1, tk_prev = 1;
     for(int itr = 0; itr < n_iter; itr++) {
@@ -172,7 +206,7 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
             // https://i.sstatic.net/IvZPe.png
             float alpha = -1.0f;
             float beta = 1.0f;
-            CHECK_CUBLAS_NORET(cublasGemmEx(handle, CUBLAS_OP_T, CUBLAS_OP_N, inp_dim, n_samples, dict_sz, &alpha, basis, CUDA_R_32F, dict_sz, Y, CUDA_R_32F, dict_sz, &beta, residual, CUDA_R_32F, inp_dim, compute_type, CUBLAS_GEMM_DEFAULT));    
+            CHECK_CUBLAS_NORET(cublasGemmEx(handle, CUBLAS_OP_T, CUBLAS_OP_N, inp_dim, n_samples, dict_sz, &alpha, basis, CUDA_R_16F, dict_sz, Y, CUDA_R_16F, dict_sz, &beta, residual, CUDA_R_16F, inp_dim, compute_type, CUBLAS_GEMM_DEFAULT));    
         }
 
         // mm = residual @ basis
@@ -181,7 +215,7 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
             // cublas assumes column-major but we have row major
             // https://i.sstatic.net/IvZPe.png
             float beta = 1.0f;
-            CHECK_CUBLAS_NORET(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, dict_sz, n_samples, inp_dim, &lr, basis, CUDA_R_32F, dict_sz, residual, CUDA_R_32F, inp_dim, &beta, Y, CUDA_R_32F, dict_sz, compute_type, CUBLAS_GEMM_DEFAULT));
+            CHECK_CUBLAS_NORET(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, dict_sz, n_samples, inp_dim, &lr, basis, CUDA_R_16F, dict_sz, residual, CUDA_R_16F, inp_dim, &beta, Y, CUDA_R_16F, dict_sz, compute_type, CUBLAS_GEMM_DEFAULT));
         }
 
         cudaEventRecord(blas);
@@ -196,7 +230,7 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
         int block_sz = 256;
         int n_blocks = (z_n_el + block_sz - 1) / block_sz;       // ceil(z_n_el / block_sz)
         int smem_sz = 2 * block_sz * sizeof(float);
-        y_update<<<n_blocks, block_sz, smem_sz>>>(z_n_el, Y, z_prev, alpha_L, mlt, norms, &norms[1]);
+        y_update<<<n_blocks, block_sz, smem_sz>>>(z_n_el, Y, z_prev, __float2half(alpha_L), __float2half(mlt), norms, &norms[1]);
         cudaEventRecord(k_exec);
 
         CHECK_CUDA_NORET(cudaMemcpy((void*)norms_host, norms, norm_sz, cudaMemcpyDeviceToHost))
@@ -228,10 +262,19 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
     }
     printf("\n");
 
-    // memcpy(Z, z_prev, dict_sz * n_samples * sizeof(float));
-    CHECK_CUDA_NORET(cudaMemcpy((void*)Z_host, z_prev, z_sz, cudaMemcpyDeviceToHost))
 
-
+    // TODO(as) f16 to f32
+    float* z_prev_float;
+    size_t z_sz_float = z_n_el * sizeof(float);
+    CHECK_CUDA_NORET(cudaMalloc((void**)&z_prev_float, z_sz_float))
+    {
+        int block_sz = 256;
+        int grid_sz = (z_n_el + block_sz - 1) / block_sz;
+        f16_to_f32<<<grid_sz, block_sz>>>(z_prev, z_prev_float, z_n_el);
+    }
+    CHECK_CUDA_NORET(cudaMemcpy((void*)Z_host, z_prev_float, z_sz_float, cudaMemcpyDeviceToHost))
+    
+    CHECK_CUDA_NORET(cudaFree(z_prev_float))
     CHECK_CUDA_NORET(cudaFree(residual))
     CHECK_CUDA_NORET(cudaFree(z_prev))
     CHECK_CUDA_NORET(cudaFree(norms))
