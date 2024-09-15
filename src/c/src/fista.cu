@@ -197,7 +197,6 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
         int n_blocks = (z_n_el + block_sz - 1) / block_sz;       // ceil(z_n_el / block_sz)
         int smem_sz = 2 * block_sz * sizeof(float);
         y_update<<<n_blocks, block_sz, smem_sz>>>(z_n_el, Y, z_prev, alpha_L, mlt, norms, &norms[1]);
-        // CHECK_CUDA_NORET(cudaDeviceSynchronize());
         cudaEventRecord(k_exec);
 
         CHECK_CUDA_NORET(cudaMemcpy((void*)norms_host, norms, norm_sz, cudaMemcpyDeviceToHost))
@@ -235,6 +234,7 @@ void fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __
 
     CHECK_CUDA_NORET(cudaFree(residual))
     CHECK_CUDA_NORET(cudaFree(z_prev))
+    CHECK_CUDA_NORET(cudaFree(norms))
     CHECK_CUDA_NORET(cudaFree(Y))
     CHECK_CUDA_NORET(cudaFree(X))
     CHECK_CUDA_NORET(cudaFree(basis))
