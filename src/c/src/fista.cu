@@ -41,7 +41,12 @@ void print_stack_trace();
     }                                                                           \
 }
 
-__global__ void y_update(size_t n, float* Y, float* z_prev, float alpha_L, float mlt, float* diff_norm, float* prev_z_norm) {
+
+__device__ __forceinline__ float branchless_max(float x, float y) {
+    return x * (x > y) + y * (y >= x);
+}
+
+__global__ void y_update(size_t n, float* __restrict__ Y, float* __restrict__ z_prev, float alpha_L, float mlt, float* __restrict__ diff_norm, float* __restrict__ prev_z_norm) {
     int tid = threadIdx.x;
     int index = blockIdx.x * blockDim.x + tid;
     int stride = blockDim.x * gridDim.x;
@@ -49,15 +54,57 @@ __global__ void y_update(size_t n, float* Y, float* z_prev, float alpha_L, float
     float thread_local_diff_norm = 0;
     float thread_local_prev_z_norm = 0;
     
-    // NOTE(as): 2 read + 2 writes per iteration (assuming thread local var are cached properly)
-    for(int idx = index; idx < n; idx += stride) {
-        float Y_val = Y[idx] < alpha_L ? 0.0f : Y[idx] - alpha_L;
+    // read/write global memory as float4
+    int idx = index;
+    for(idx = index * 4; idx < n; idx += stride * 4) {
+        float4 Y_vec = ((float4*)Y)[idx / 4];
+        
+        // float Y_prev = z_prev[idx];
+        float4 z_prev_vec = ((float4*)z_prev)[idx / 4];
+
+        // float Y_val = max(0.0f, Y[idx] - alpha_L);
+        float4 Y_val;
+        Y_val.x = branchless_max(0.0f, Y_vec.x - alpha_L);
+        Y_val.y = branchless_max(0.0f, Y_vec.y - alpha_L);
+        Y_val.z = branchless_max(0.0f, Y_vec.z - alpha_L);
+        Y_val.w = branchless_max(0.0f, Y_vec.w - alpha_L);
+
+        // z_prev[idx] = Y_val;
+        ((float4*)z_prev)[idx / 4] = Y_val;
+
+        // float diff = Y_val - Y_prev;
+        float4 diff;
+        diff.x = Y_val.x - z_prev_vec.x;
+        diff.y = Y_val.y - z_prev_vec.y;
+        diff.z = Y_val.z - z_prev_vec.z;
+        diff.w = Y_val.w - z_prev_vec.w;
+        
+        // thread_local_prev_z_norm += Y_prev * Y_prev;
+        thread_local_prev_z_norm += z_prev_vec.x * z_prev_vec.x + z_prev_vec.y * z_prev_vec.y + z_prev_vec.z * z_prev_vec.z + z_prev_vec.w * z_prev_vec.w;
+
+        // thread_local_diff_norm += diff * diff;
+        thread_local_diff_norm += diff.x * diff.x + diff.y * diff.y + diff.z * diff.z + diff.w * diff.w;
+
+        // Y_val += mlt * diff;
+        Y_val.x += mlt * diff.x;
+        Y_val.y += mlt * diff.y;
+        Y_val.z += mlt * diff.z;
+        Y_val.w += mlt * diff.w;
+
+        // Y[idx] = Y_val;
+        ((float4*)Y)[idx / 4] = Y_val;
+    }
+
+    // clean up if n % 4 != 0
+    for(; idx < n; idx += stride) {
+        float Y_val = branchless_max(0.0f, Y[idx] - alpha_L);
 
         float Y_prev = z_prev[idx];
         z_prev[idx] = Y_val;
-        thread_local_prev_z_norm += Y_prev * Y_prev;
 
         float diff = Y_val - Y_prev;
+
+        thread_local_prev_z_norm += Y_prev * Y_prev;
         thread_local_diff_norm += diff * diff;
         
         Y_val += mlt * diff;
@@ -141,7 +188,7 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
 
     // TODO(as): bunch of faster + less precise BLAS options here https://docs.nvidia.com/cuda/cublas/#cublasoperation-t
     // TODO(as): CUTLASS? https://github.com/NVIDIA/cutlass/blob/main/examples/45_dual_gemm/dual_gemm.cu
-    cublasComputeType_t compute_type = CUBLAS_COMPUTE_32F_PEDANTIC;
+    cublasComputeType_t compute_type = CUBLAS_COMPUTE_32F;
 
 
     // TODO(as): page locking + async transfers. ways to move these calls outside of this function so not called on each iteration?
@@ -210,8 +257,8 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
         CHECK_CUDA_NORET(cudaMemset(norms, 0, norm_sz))
         cudaEventRecord(k_start);
         
-        int block_sz = 256;
-        int n_blocks = (z_n_el + block_sz - 1) / block_sz;       // ceil(z_n_el / block_sz)
+        int block_sz = 512;
+        int n_blocks = (ceil(z_n_el / 4) + block_sz - 1) / block_sz;       // ceil(z_n_el / block_sz)
         int smem_sz = 2 * block_sz * sizeof(float);
         y_update<<<n_blocks, block_sz, smem_sz>>>(z_n_el, Y, z_prev, alpha_L, mlt, norms, &norms[1]);
         cudaEventRecord(k_exec);
