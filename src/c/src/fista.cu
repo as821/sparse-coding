@@ -46,6 +46,23 @@ __device__ __forceinline__ float branchless_max(float x, float y) {
     return x * (x > y) + y * (y >= x);
 }
 
+template <unsigned int block_sz>
+__device__ void warp_reduce(volatile float* sdata, int tid) {
+    if(block_sz >= 64)
+        sdata[tid] += sdata[tid + 32];
+    if(block_sz >= 32)
+        sdata[tid] += sdata[tid + 16];
+    if(block_sz >= 16)
+        sdata[tid] += sdata[tid + 8];
+    if(block_sz >= 8)
+        sdata[tid] += sdata[tid + 4];
+    if(block_sz >= 4)
+        sdata[tid] += sdata[tid + 2];
+    if(block_sz >= 2)
+        sdata[tid] += sdata[tid + 1];
+}
+
+template <unsigned int block_sz>
 __global__ void y_update(size_t n, float* __restrict__ Y, float* __restrict__ z_prev, float alpha_L, float mlt, float* __restrict__ diff_norm, float* __restrict__ prev_z_norm) {
     int tid = threadIdx.x;
     int index = blockIdx.x * blockDim.x + tid;
@@ -56,11 +73,14 @@ __global__ void y_update(size_t n, float* __restrict__ Y, float* __restrict__ z_
     
     // read/write global memory as float4
     int idx = index;
-    for(idx = index * 4; idx < n; idx += stride * 4) {
-        float4 Y_vec = ((float4*)Y)[idx / 4];
+    for(idx = index << 2; idx < n; idx += stride << 2) {
+        int idx_div_4 = idx >> 2;       // div by 4
+        float4* Y_loc = &((float4*)Y)[idx_div_4];
+        float4 Y_vec = *Y_loc;
         
         // float Y_prev = z_prev[idx];
-        float4 z_prev_vec = ((float4*)z_prev)[idx / 4];
+        float4* z_prev_loc = &((float4*)z_prev)[idx_div_4];
+        float4 z_prev_vec = *z_prev_loc;
 
         // float Y_val = max(0.0f, Y[idx] - alpha_L);
         float4 Y_val;
@@ -70,7 +90,7 @@ __global__ void y_update(size_t n, float* __restrict__ Y, float* __restrict__ z_
         Y_val.w = branchless_max(0.0f, Y_vec.w - alpha_L);
 
         // z_prev[idx] = Y_val;
-        ((float4*)z_prev)[idx / 4] = Y_val;
+        *z_prev_loc = Y_val;
 
         // float diff = Y_val - Y_prev;
         float4 diff;
@@ -92,7 +112,7 @@ __global__ void y_update(size_t n, float* __restrict__ Y, float* __restrict__ z_
         Y_val.w += mlt * diff.w;
 
         // Y[idx] = Y_val;
-        ((float4*)Y)[idx / 4] = Y_val;
+        *Y_loc = Y_val;
     }
 
     // clean up if n % 4 != 0
@@ -111,22 +131,51 @@ __global__ void y_update(size_t n, float* __restrict__ Y, float* __restrict__ z_
         Y[idx] = Y_val;
     }
 
+    // tree-based reduction of thread-local norm values for all threads in the block
+    // https://developer.download.nvidia.com/compute/cuda/1.1-Beta/x86_website/projects/reduction/doc/reduction.pdf
     extern __shared__ float shmem[];
     float* shared_diff_norm = shmem;
     float* shared_prev_z_norm = &shmem[blockDim.x];
 
-    // tree-based reduction of thread-local norm values for all threads in the block
     shared_diff_norm[tid] = thread_local_diff_norm;
     shared_prev_z_norm[tid] = thread_local_prev_z_norm;
     __syncthreads();
 
-    for (int s = blockDim.x / 2; s > 0; s /= 2) {
-        if (tid < s) {
-            shared_diff_norm[tid] += shared_diff_norm[tid + s];
-            shared_prev_z_norm[tid] += shared_prev_z_norm[tid + s];
+    // for (int s = blockDim.x >> 1; s > 32; s >>= 1) {
+    //     if (tid < s) {
+    //         shared_diff_norm[tid] += shared_diff_norm[tid + s];
+    //         shared_prev_z_norm[tid] += shared_prev_z_norm[tid + s];
+    //     }
+    //     __syncthreads();
+    // }
+
+
+    if(block_sz >= 512) {
+        if(tid < 256) {
+            shared_diff_norm[tid] += shared_diff_norm[tid + 256];
+            shared_prev_z_norm[tid] += shared_prev_z_norm[tid + 256];
         }
         __syncthreads();
     }
+    if(block_sz >= 256) {
+        if(tid < 128) {
+            shared_diff_norm[tid] += shared_diff_norm[tid + 128];
+            shared_prev_z_norm[tid] += shared_prev_z_norm[tid + 128];
+        }
+        __syncthreads();
+    }
+    if(block_sz >= 128) {
+        if(tid < 64) {
+            shared_diff_norm[tid] += shared_diff_norm[tid + 64];
+            shared_prev_z_norm[tid] += shared_prev_z_norm[tid + 64];
+        }
+        __syncthreads();
+    }
+    if(tid < 32) {
+        warp_reduce<block_sz>(shared_diff_norm, tid);
+        warp_reduce<block_sz>(shared_prev_z_norm, tid);
+    }
+
     if (tid == 0) {
         atomicAdd(diff_norm, shared_diff_norm[0]);
         atomicAdd(prev_z_norm, shared_prev_z_norm[0]);
@@ -257,10 +306,11 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
         CHECK_CUDA_NORET(cudaMemset(norms, 0, norm_sz))
         cudaEventRecord(k_start);
         
-        int block_sz = 512;
-        int n_blocks = (ceil(z_n_el / 4) + block_sz - 1) / block_sz;       // ceil(z_n_el / block_sz)
+        const int block_sz = 256;
+        // int n_blocks = (ceil(z_n_el / 4) + block_sz - 1) / block_sz;       // ceil(z_n_el / block_sz)
+        int n_blocks = 8192;
         int smem_sz = 2 * block_sz * sizeof(float);
-        y_update<<<n_blocks, block_sz, smem_sz>>>(z_n_el, Y, z_prev, alpha_L, mlt, norms, &norms[1]);
+        y_update<block_sz><<<n_blocks, block_sz, smem_sz>>>(z_n_el, Y, z_prev, alpha_L, mlt, norms, &norms[1]);
         cudaEventRecord(k_exec);
 
         CHECK_CUDA_NORET(cudaMemcpy((void*)norms_host, norms, norm_sz, cudaMemcpyDeviceToHost))

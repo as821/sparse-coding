@@ -20,7 +20,7 @@ gcc -shared -g -L"$OPENBLAS_LIB" $OPTIM_OPTIONS -o src/c/bin/fista.so src/c/bin/
 
 
 
-NVCC_OPTIONS="-O3 -gencode arch=compute_89,code=sm_89"
+NVCC_OPTIONS="-O3 -arch=sm_89 -gencode=arch=compute_89,code=sm_89 -gencode=arch=compute_89,code=compute_89"
 nvcc -shared -g -G -lcublas $NVCC_OPTIONS -o src/c/bin/cu_fista.so src/c/src/fista.cu -Xcompiler="-fPIC $OPTIM_OPTIONS" -diag-suppress 2464
 
 rm -f src/c/bin/*.o
