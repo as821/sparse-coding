@@ -324,23 +324,25 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
 
 
         // printf("%d: %f %f\n", itr, sqrtf(diff_norm), sqrtf(prev_z_norm));
-        printf("\33[2K\r%d / %d", itr, n_iter);
-        fflush(stdout);
+        
+        // printf("\33[2K\r%d / %d", itr, n_iter);
+        // fflush(stdout);
 
 
-        cudaEventSynchronize(k_end);
-        cuda_log_time_diff("\n\tblas", &start, &blas);
-        cuda_log_time_diff("\tk_start", &blas, &k_start);
-        cuda_log_time_diff("\tk_exec", &k_start, &k_exec);
-        cuda_log_time_diff("\tk_end", &k_exec, &k_end);
-        float milli = 0;
-        cudaEventElapsedTime(&milli, k_start, k_exec);
-        printf("\tbandwidth: %f (GB/s)\n", z_sz * 4 / milli / 1e6);     // 2 read + 2 write per iteration   
+
+        // cudaEventSynchronize(k_end);
+        // cuda_log_time_diff("\n\tblas", &start, &blas);
+        // cuda_log_time_diff("\tk_start", &blas, &k_start);
+        // cuda_log_time_diff("\tk_exec", &k_start, &k_exec);
+        // cuda_log_time_diff("\tk_end", &k_exec, &k_end);
+        // float milli = 0;
+        // cudaEventElapsedTime(&milli, k_start, k_exec);
+        // printf("\tbandwidth: %f (GB/s)\n", z_sz * 4 / milli / 1e6);     // 2 read + 2 write per iteration   
 
         if(itr != 0 && norm_ratio < converge_thresh)
             break;
     }
-    printf("\n");
+    // printf("\n");
 
     // memcpy(Z, z_prev, dict_sz * n_samples * sizeof(float));
     CHECK_CUDA_NORET(cudaMemcpy((void*)Z_host, z_prev, z_sz, cudaMemcpyDeviceToHost))

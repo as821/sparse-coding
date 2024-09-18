@@ -67,5 +67,5 @@ def cu_fista(x, basis, alpha, n_iter, converge_thresh=0.01, lr=0.01):
                 x.shape[0], x.shape[1], basis.shape[1], lr, alpha, n_iter, converge_thresh)
     end = time()
 
-    print(f"FISTA: {end - start:.3f}s")
+    # print(f"FISTA: {end - start:.3f}s")
     return z, n_iter, end - start
