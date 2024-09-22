@@ -63,23 +63,21 @@ __device__ inline void warp_reduce(volatile float* sdata, int tid) {
 }
 
 template <unsigned int block_sz>
-__global__ void y_update(size_t n, float* __restrict__ Y, float* __restrict__ z_prev, float alpha_L, float mlt, float* __restrict__ diff_norm, float* __restrict__ prev_z_norm) {
+__global__ void y_update(size_t n, float4* __restrict__ Y, float4* __restrict__ z_prev, float alpha_L, float mlt, float* __restrict__ diff_norm, float* __restrict__ prev_z_norm) {
     int tid = threadIdx.x;
     int index = blockIdx.x * blockDim.x + tid;
     int stride = blockDim.x * gridDim.x;
     
     float thread_local_diff_norm = 0;
     float thread_local_prev_z_norm = 0;
-    
-    // read/write global memory as float4
-    int idx = index;
-    for(idx = index << 2; idx < n; idx += stride << 2) {
-        int idx_div_4 = idx >> 2;       // div by 4
-        float4* Y_loc = &((float4*)Y)[idx_div_4];
+
+    size_t n_div_4 = n / 4;
+    for(int idx = index; idx < n_div_4; idx += stride) {
+        float4* Y_loc = &Y[idx];
         float4 Y_vec = *Y_loc;
         
         // float Y_prev = z_prev[idx];
-        float4* z_prev_loc = &((float4*)z_prev)[idx_div_4];
+        float4* z_prev_loc = &z_prev[idx];
         float4 z_prev_vec = *z_prev_loc;
 
         // float Y_val = max(0.0f, Y[idx] - alpha_L);
@@ -236,6 +234,9 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
     CHECK_CUDA_NORET(cudaMemset(z_prev, 0, z_sz))
     CHECK_CUDA_NORET(cudaMemset(Y, 0, z_sz))
 
+
+    CHECK(z_n_el % 4 == 0);         // assumed by kernel format
+
     float norms_host[2];
     float* norms;
     size_t norm_sz = 2 * sizeof(float);
@@ -283,11 +284,11 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
         CHECK_CUDA_NORET(cudaMemset(norms, 0, norm_sz))
         cudaEventRecord(k_start);
         
-        const int block_sz = 256;
+        const int block_sz = 32;
         // int n_blocks = (ceil(z_n_el / 4) + block_sz - 1) / block_sz;       // ceil(z_n_el / block_sz)
         int n_blocks = 8192;
         int smem_sz = 2 * block_sz * sizeof(float);
-        y_update<block_sz><<<n_blocks, block_sz, smem_sz>>>(z_n_el, Y, z_prev, alpha_L, mlt, norms, &norms[1]);
+        y_update<block_sz><<<n_blocks, block_sz, smem_sz>>>(z_n_el, (float4*)Y, (float4*)z_prev, alpha_L, mlt, norms, &norms[1]);
         cudaEventRecord(k_exec);
 
         CHECK_CUDA_NORET(cudaMemcpy((void*)norms_host, norms, norm_sz, cudaMemcpyDeviceToHost))
