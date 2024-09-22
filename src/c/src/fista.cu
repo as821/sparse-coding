@@ -215,11 +215,8 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
 
     gettimeofday(&handle_time, NULL);
 
-
-    // TODO(as): bunch of faster + less precise BLAS options here https://docs.nvidia.com/cuda/cublas/#cublasoperation-t
-    // TODO(as): CUTLASS? https://github.com/NVIDIA/cutlass/blob/main/examples/45_dual_gemm/dual_gemm.cu
-    cublasComputeType_t compute_type = CUBLAS_COMPUTE_32F;
-
+    // test_fista shows minor max difference (1e-4) from the reference solution when this option is enabled, but it doubles the performance of the BLAS section
+    cublasComputeType_t compute_type = CUBLAS_COMPUTE_32F_FAST_TF32;
 
     // TODO(as): page locking + async transfers. ways to move these calls outside of this function so not called on each iteration?
     float *X, *basis;
