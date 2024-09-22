@@ -42,12 +42,12 @@ void print_stack_trace();
 }
 
 
-__device__ __forceinline__ float branchless_max(float x, float y) {
-    return x * (x > y) + y * (y >= x);
+__device__ __forceinline__ float branchless_relu(float x) {
+    return x * (x > 0.0f);
 }
 
 template <unsigned int block_sz>
-__device__ inline void warp_reduce(volatile float* sdata, int tid) {
+__device__ __forceinline__ void warp_reduce(volatile float* sdata, int tid) {
     if(block_sz >= 64)
         sdata[tid] += sdata[tid + 32];
     if(block_sz >= 32)
@@ -82,10 +82,10 @@ __global__ void y_update(size_t n, float4* __restrict__ Y, float4* __restrict__ 
 
         // float Y_val = max(0.0f, Y[idx] - alpha_L);
         float4 Y_val;
-        Y_val.x = branchless_max(0.0f, Y_vec.x - alpha_L);
-        Y_val.y = branchless_max(0.0f, Y_vec.y - alpha_L);
-        Y_val.z = branchless_max(0.0f, Y_vec.z - alpha_L);
-        Y_val.w = branchless_max(0.0f, Y_vec.w - alpha_L);
+        Y_val.x = branchless_relu(Y_vec.x - alpha_L);
+        Y_val.y = branchless_relu(Y_vec.y - alpha_L);
+        Y_val.z = branchless_relu(Y_vec.z - alpha_L);
+        Y_val.w = branchless_relu(Y_vec.w - alpha_L);
 
         // z_prev[idx] = Y_val;
         *z_prev_loc = Y_val;
