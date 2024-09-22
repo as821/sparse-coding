@@ -41,6 +41,23 @@ void print_stack_trace();
     }                                                                           \
 }
 
+__device__ __forceinline__ static void copy_async(float4* gmem_src, float4* smem_dst) {
+    asm volatile("cp.async.cg.shared.global.L2::128B [%0], [%1], %2;\n" :: "r"(static_cast<uint32_t>(__cvta_generic_to_shared(smem_dst))), "l"(gmem_src), "n"(sizeof(float4)));
+}
+
+__device__ __forceinline__ void cp_async_fence() {
+    asm volatile("cp.async.commit_group;\n" ::);
+}
+
+__device__ __forceinline__ void cp_async_wait() {
+    asm volatile("cp.async.wait_all;\n" ::);
+}
+
+template <int N>
+__device__ __forceinline__ void cp_async_wait_n() {
+    asm volatile("cp.async.wait_group %0;\n" :: "n"(N));
+}
+
 
 __device__ __forceinline__ float branchless_relu(float x) {
     return x * (x > 0.0f);
@@ -73,50 +90,63 @@ __global__ void y_update(size_t n, float4* __restrict__ Y, float4* __restrict__ 
 
     size_t n_div_4 = n / 4;
 
+    const int n_buffers = 2;        // number of buffers resident in shared memory for either array
+    extern __shared__ float4 shmem4[];
+    float4* Y_shared_offset = shmem4;
+    float4* z_prev_shared_offset = &shmem4[n_buffers * blockDim.x];
+
+    copy_async(&Y[index], &Y_shared_offset[tid]);    
+    copy_async(&z_prev[index], &z_prev_shared_offset[tid]);
+    int async_buf_idx = 0;
+
     #pragma unroll
     for(int el_idx = 0; el_idx < n_el_per_thread; el_idx++) {
         int idx = index + el_idx * stride;
         if(idx >= n_div_4)
             break;
-        
-        float4* Y_loc = &Y[idx];
-        float4 Y_vec = *Y_loc;
-        
-        // float Y_prev = z_prev[idx];
-        float4* z_prev_loc = &z_prev[idx];
-        float4 z_prev_vec = *z_prev_loc;
 
-        // float Y_val = max(0.0f, Y[idx] - alpha_L);
+        // wait for async for this batch + kick off async for next batch
+        cp_async_wait();
+        __syncthreads();
+
+        int write_idx = (async_buf_idx + 1) % n_buffers;            // TODO(as) mod is very slow
+        int next_idx = idx + stride;
+        if(next_idx < n_div_4) {
+            copy_async(&Y[next_idx], &Y_shared_offset[write_idx * block_sz + tid]);    
+            copy_async(&z_prev[next_idx], &z_prev_shared_offset[write_idx * block_sz + tid]);
+        }
+
+        // read from shmem
+        float4 Y_vec = Y_shared_offset[async_buf_idx * block_sz + tid];
+        float4 z_prev_vec = z_prev_shared_offset[async_buf_idx * block_sz + tid];
+        async_buf_idx = write_idx;
+
+
+        // perform computation
         float4 Y_val;
         Y_val.x = branchless_relu(Y_vec.x - alpha_L);
         Y_val.y = branchless_relu(Y_vec.y - alpha_L);
         Y_val.z = branchless_relu(Y_vec.z - alpha_L);
         Y_val.w = branchless_relu(Y_vec.w - alpha_L);
 
-        // z_prev[idx] = Y_val;
-        *z_prev_loc = Y_val;
+        z_prev[idx] = Y_val;
 
-        // float diff = Y_val - Y_prev;
         float4 diff;
         diff.x = Y_val.x - z_prev_vec.x;
         diff.y = Y_val.y - z_prev_vec.y;
         diff.z = Y_val.z - z_prev_vec.z;
         diff.w = Y_val.w - z_prev_vec.w;
         
-        // thread_local_prev_z_norm += Y_prev * Y_prev;
         thread_local_prev_z_norm += z_prev_vec.x * z_prev_vec.x + z_prev_vec.y * z_prev_vec.y + z_prev_vec.z * z_prev_vec.z + z_prev_vec.w * z_prev_vec.w;
 
-        // thread_local_diff_norm += diff * diff;
         thread_local_diff_norm += diff.x * diff.x + diff.y * diff.y + diff.z * diff.z + diff.w * diff.w;
 
-        // Y_val += mlt * diff;
         Y_val.x += mlt * diff.x;
         Y_val.y += mlt * diff.y;
         Y_val.z += mlt * diff.z;
         Y_val.w += mlt * diff.w;
 
-        // Y[idx] = Y_val;
-        *Y_loc = Y_val;
+        Y[idx] = Y_val;
     }
 
     {
@@ -294,10 +324,12 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
         // int n_blocks = (ceil(z_n_el / 4) + block_sz - 1) / block_sz;       // ceil(z_n_el / block_sz)
         // int n_blocks = 8192;
         
-        const int n_el_per_thread = 16;
+        const int n_el_per_thread = 64;
         int n_blocks = (int)ceil((float)z_n_el / (float)(n_el_per_thread * block_sz));
         printf("nblocks: %d\n", n_blocks);
-        int smem_sz = 2 * block_sz * sizeof(float);
+
+        // int smem_sz = 2 * block_sz * sizeof(float);
+        int smem_sz = 4 * sizeof(float4) * block_sz;
         y_update<block_sz, n_el_per_thread><<<n_blocks, block_sz, smem_sz>>>(z_n_el, (float4*)Y, (float4*)z_prev, alpha_L, mlt, norms, &norms[1]);
         cudaEventRecord(k_exec);
 
