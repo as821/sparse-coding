@@ -90,7 +90,7 @@ __global__ void y_update(size_t n, float4* __restrict__ Y, float4* __restrict__ 
 
     size_t n_div_4 = n / 4;
 
-    const int n_buffers = 3;        // number of buffers resident in shared memory for either array
+    const int n_buffers = 2;        // number of buffers resident in shared memory for either array
     extern __shared__ float4 shmem4[];
     float4* Y_shared_offset = shmem4;
     float4* z_prev_shared_offset = &shmem4[n_buffers * blockDim.x];
@@ -336,7 +336,7 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
         printf("nblocks: %d\n", n_blocks);
 
         // int smem_sz = 2 * block_sz * sizeof(float);
-        int smem_sz = 6 * sizeof(float4) * block_sz;
+        int smem_sz = 4 * sizeof(float4) * block_sz;
         y_update<block_sz, n_el_per_thread><<<n_blocks, block_sz, smem_sz>>>(z_n_el, (float4*)Y, (float4*)z_prev, alpha_L, mlt, norms, &norms[1]);
         cudaEventRecord(k_exec);
 
