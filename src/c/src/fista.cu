@@ -90,14 +90,20 @@ __global__ void y_update(size_t n, float4* __restrict__ Y, float4* __restrict__ 
 
     size_t n_div_4 = n / 4;
 
-    const int n_buffers = 2;        // number of buffers resident in shared memory for either array
+    const int n_buffers = 3;        // number of buffers resident in shared memory for either array
     extern __shared__ float4 shmem4[];
     float4* Y_shared_offset = shmem4;
     float4* z_prev_shared_offset = &shmem4[n_buffers * blockDim.x];
 
-    copy_async(&Y[index], &Y_shared_offset[tid]);    
-    copy_async(&z_prev[index], &z_prev_shared_offset[tid]);
+    // kick off reads for all buffers except for one
+    #pragma unroll
+    for(int idx = 0; idx < n_buffers-1; idx++) {
+        copy_async(&Y[index + idx * stride], &Y_shared_offset[tid + idx * block_sz]);    
+        copy_async(&z_prev[index + idx * stride], &z_prev_shared_offset[tid + idx * block_sz]);
+        cp_async_fence();
+    }
     int async_buf_idx = 0;
+    const int write_idx_step = n_buffers - 1;       // diff between read and write indices
 
     #pragma unroll
     for(int el_idx = 0; el_idx < n_el_per_thread; el_idx++) {
@@ -106,20 +112,21 @@ __global__ void y_update(size_t n, float4* __restrict__ Y, float4* __restrict__ 
             break;
 
         // wait for async for this batch + kick off async for next batch
-        cp_async_wait();
+        cp_async_wait_n<n_buffers-2>();     // only wait for the oldest async copy group (n_buffers-1 in flight at a time, n_buffers-2 after we wait for oldest one here)
         __syncthreads();
 
-        int write_idx = (async_buf_idx + 1) % n_buffers;            // TODO(as) mod is very slow
-        int next_idx = idx + stride;
+        int write_idx = (async_buf_idx + write_idx_step) % n_buffers;            // TODO(as) mod is very slow
+        int next_idx = idx + write_idx_step * stride;
         if(next_idx < n_div_4) {
             copy_async(&Y[next_idx], &Y_shared_offset[write_idx * block_sz + tid]);    
             copy_async(&z_prev[next_idx], &z_prev_shared_offset[write_idx * block_sz + tid]);
+            cp_async_fence();
         }
 
         // read from shmem
         float4 Y_vec = Y_shared_offset[async_buf_idx * block_sz + tid];
         float4 z_prev_vec = z_prev_shared_offset[async_buf_idx * block_sz + tid];
-        async_buf_idx = write_idx;
+        async_buf_idx = (async_buf_idx + 1) % n_buffers;
 
 
         // perform computation
@@ -329,7 +336,7 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
         printf("nblocks: %d\n", n_blocks);
 
         // int smem_sz = 2 * block_sz * sizeof(float);
-        int smem_sz = 4 * sizeof(float4) * block_sz;
+        int smem_sz = 6 * sizeof(float4) * block_sz;
         y_update<block_sz, n_el_per_thread><<<n_blocks, block_sz, smem_sz>>>(z_n_el, (float4*)Y, (float4*)z_prev, alpha_L, mlt, norms, &norms[1]);
         cudaEventRecord(k_exec);
 
