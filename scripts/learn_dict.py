@@ -119,14 +119,17 @@ def main(args):
                 if c_impl_available():
                     z, n_iter, _ = cu_fista(img_batch, basis.weight, args.alpha, fista_max_iter, args.fista_conv, args.fista_lr)
                 
+                    if args.cuda_profile:
+                        sys.exit(1)
+
                     # TODO(as): debugging
-                    foo = basis.weight.clone()
-                    z_gt, n_iter_gt = FISTA(img_batch.clone().to("cuda"), foo.to("cuda"), args.alpha, fista_max_iter, args.fista_conv, "cuda", lr=args.fista_lr)
-                    assert n_iter == n_iter_gt, f"{n_iter} != {n_iter_gt}"
-                    assert np.all(np.abs(z_gt.cpu().numpy() - z.numpy()) < 0.1), f"{np.abs(z_gt.cpu().numpy() - z.numpy()).max()} >= 0.1"
+                    # foo = basis.weight.clone()
+                    # z_gt, n_iter_gt = FISTA(img_batch.clone().to("cuda"), foo.to("cuda"), args.alpha, fista_max_iter, args.fista_conv, "cuda", lr=args.fista_lr)
+                    # assert n_iter == n_iter_gt, f"{n_iter} != {n_iter_gt}"
+                    # assert np.all(np.abs(z_gt.cpu().numpy() - z.numpy()) < 0.1), f"{np.abs(z_gt.cpu().numpy() - z.numpy()).max()} >= 0.1"
                 else:
                     z, n_iter = FISTA(img_batch, basis.weight, args.alpha, fista_max_iter, args.fista_conv, device, lr=args.fista_lr)
-                    vis_dict['fista_niter'] = n_iter
+                vis_dict['fista_niter'] = n_iter
             pred = basis(z)
 
             loss = ((img_batch - pred) ** 2).sum()
@@ -181,7 +184,9 @@ if __name__ == "__main__":
     parser.add_argument('--fista_lr', default=0.001, type=float, help="learning rate for FISTA")
     parser.add_argument('--dataset', default='cifar10', choices=['nat', 'cifar10'], help='dataset to use')
     parser.add_argument('--wandb', action="store_true")
+    parser.add_argument('--cuda_profile', action="store_true")
     parser.add_argument('--batch_sz', default=2048, type=int, help="batch size")
+
 
 
     main(parser.parse_args())

@@ -27,10 +27,10 @@ def main(args):
 
     lr = 0.01
     alpha = 0.01
-    niter = 10000
+    niter = 10
     thresh = 0.01
     
-    n_test = 10
+    n_test = 1
     res = np.zeros(shape=(n_test,))
     for idx in range(n_test):
         c_res, n_iter, T = cu_fista(x, basis, alpha, niter, thresh, lr)

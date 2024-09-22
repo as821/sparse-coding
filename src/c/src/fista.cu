@@ -290,10 +290,7 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
         CHECK_CUDA_NORET(cudaMemset(norms, 0, norm_sz))
         cudaEventRecord(k_start);
         
-        const int block_sz = 32;
-        // int n_blocks = (ceil(z_n_el / 4) + block_sz - 1) / block_sz;       // ceil(z_n_el / block_sz)
-        // int n_blocks = 8192;
-        
+        const int block_sz = 384;
         const int n_el_per_thread = 16;
         int n_blocks = (int)ceil((float)z_n_el / (float)(n_el_per_thread * block_sz));
         printf("nblocks: %d\n", n_blocks);
