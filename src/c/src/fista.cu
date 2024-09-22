@@ -9,6 +9,8 @@
 
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
+#include <cuda.h>
+
 
 
 void print_stack_trace();
@@ -39,6 +41,97 @@ void print_stack_trace();
                __LINE__, status, __FILE__);                                     \
         exit(EXIT_FAILURE);                                                     \
     }                                                                           \
+}
+
+
+
+
+cudaError_t setProp(CUmemAllocationProp *prop, bool UseCompressibleMemory)
+{
+    CUdevice currentDevice;
+    if (cuCtxGetDevice(&currentDevice) != CUDA_SUCCESS)
+        return cudaErrorMemoryAllocation;
+
+    memset(prop, 0, sizeof(CUmemAllocationProp));
+    prop->type = CU_MEM_ALLOCATION_TYPE_PINNED;
+    prop->location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+    prop->location.id = currentDevice;
+
+    if (UseCompressibleMemory)
+        prop->allocFlags.compressionType = CU_MEM_ALLOCATION_COMP_GENERIC;
+
+    return cudaSuccess;
+}
+
+cudaError_t allocateCompressible(void **adr, size_t size)
+{
+    bool UseCompressibleMemory = true;
+    CUmemAllocationProp prop = {};
+    cudaError_t err = setProp(&prop, UseCompressibleMemory);
+    if (err != cudaSuccess)
+        return err;
+
+    size_t granularity = 0;
+    if (cuMemGetAllocationGranularity(&granularity, &prop,
+                                      CU_MEM_ALLOC_GRANULARITY_MINIMUM) != CUDA_SUCCESS)
+        return cudaErrorMemoryAllocation;
+    size = ((size - 1) / granularity + 1) * granularity;
+    CUdeviceptr dptr;
+    if (cuMemAddressReserve(&dptr, size, 0, 0, 0) != CUDA_SUCCESS)
+        return cudaErrorMemoryAllocation;
+
+    CUmemGenericAllocationHandle allocationHandle;
+    if (cuMemCreate(&allocationHandle, size, &prop, 0) != CUDA_SUCCESS)
+        return cudaErrorMemoryAllocation;
+
+    // Check if cuMemCreate was able to allocate compressible memory.
+    if (UseCompressibleMemory) {
+        CUmemAllocationProp allocationProp = {};
+        cuMemGetAllocationPropertiesFromHandle(&allocationProp, allocationHandle);
+        if (allocationProp.allocFlags.compressionType != CU_MEM_ALLOCATION_COMP_GENERIC) {
+            printf("Could not allocate compressible memory... so waiving execution\n");
+            CHECK(false);
+        }
+    }
+
+    if (cuMemMap(dptr, size, 0, allocationHandle, 0) != CUDA_SUCCESS)
+        return cudaErrorMemoryAllocation;
+
+    if (cuMemRelease(allocationHandle) != CUDA_SUCCESS)
+        return cudaErrorMemoryAllocation;
+
+    CUmemAccessDesc accessDescriptor;
+    accessDescriptor.location.id = prop.location.id;
+    accessDescriptor.location.type = prop.location.type;
+    accessDescriptor.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+
+    if (cuMemSetAccess(dptr, size, &accessDescriptor, 1) != CUDA_SUCCESS)
+        return cudaErrorMemoryAllocation;
+
+    *adr = (void *)dptr;
+    return cudaSuccess;
+}
+
+cudaError_t freeCompressible(void *ptr, size_t size)
+{
+    bool UseCompressibleMemory = true;
+    CUmemAllocationProp prop = {};
+    cudaError_t err = setProp(&prop, UseCompressibleMemory);
+    if (err != cudaSuccess)
+        return err;
+
+    size_t granularity = 0;
+    if (cuMemGetAllocationGranularity(&granularity, &prop,
+                                      CU_MEM_ALLOC_GRANULARITY_MINIMUM) != CUDA_SUCCESS)
+        return cudaErrorMemoryAllocation;
+    size = ((size - 1) / granularity + 1) * granularity;
+
+    if (ptr == NULL)
+        return cudaSuccess;
+    if (cuMemUnmap((CUdeviceptr)ptr, size) != CUDA_SUCCESS ||
+        cuMemAddressFree((CUdeviceptr)ptr, size) != CUDA_SUCCESS)
+        return cudaErrorInvalidValue;
+    return cudaSuccess;
 }
 
 
@@ -223,17 +316,17 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
     size_t x_n_el = n_samples * inp_dim;
     size_t x_sz = x_n_el * sizeof(float);
     size_t basis_sz = inp_dim * dict_sz * sizeof(float);
-    CHECK_CUDA_NORET(cudaMalloc((void**)&X, x_sz))
-    CHECK_CUDA_NORET(cudaMalloc((void**)&basis, basis_sz))
+    CHECK_CUDA_NORET(allocateCompressible((void**)&X, x_sz))
+    CHECK_CUDA_NORET(allocateCompressible((void**)&basis, basis_sz))
     CHECK_CUDA_NORET(cudaMemcpy((void*)X, X_host, x_sz, cudaMemcpyHostToDevice))
     CHECK_CUDA_NORET(cudaMemcpy((void*)basis, basis_host, basis_sz, cudaMemcpyHostToDevice))
 
     float *residual, *z_prev, *Y;
     size_t z_n_el = dict_sz * n_samples;
     size_t z_sz = z_n_el * sizeof(float);
-    CHECK_CUDA_NORET(cudaMalloc((void**)&residual, x_sz))
-    CHECK_CUDA_NORET(cudaMalloc((void**)&z_prev, z_sz))
-    CHECK_CUDA_NORET(cudaMalloc((void**)&Y, z_sz))
+    CHECK_CUDA_NORET(allocateCompressible((void**)&residual, x_sz))
+    CHECK_CUDA_NORET(allocateCompressible((void**)&z_prev, z_sz))
+    CHECK_CUDA_NORET(allocateCompressible((void**)&Y, z_sz))
     CHECK_CUDA_NORET(cudaMemset(z_prev, 0, z_sz))
     CHECK_CUDA_NORET(cudaMemset(Y, 0, z_sz))
 
@@ -330,12 +423,12 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
     CHECK_CUDA_NORET(cudaMemcpy((void*)Z_host, z_prev, z_sz, cudaMemcpyDeviceToHost))
 
 
-    CHECK_CUDA_NORET(cudaFree(residual))
-    CHECK_CUDA_NORET(cudaFree(z_prev))
+    CHECK_CUDA_NORET(freeCompressible(residual, x_sz))
+    CHECK_CUDA_NORET(freeCompressible(z_prev, z_sz))
     CHECK_CUDA_NORET(cudaFree(norms))
-    CHECK_CUDA_NORET(cudaFree(Y))
-    CHECK_CUDA_NORET(cudaFree(X))
-    CHECK_CUDA_NORET(cudaFree(basis))
+    CHECK_CUDA_NORET(freeCompressible(Y, z_sz))
+    CHECK_CUDA_NORET(freeCompressible(X, x_sz))
+    CHECK_CUDA_NORET(freeCompressible(basis, basis_sz))
 
     cublasDestroy(handle);
 
