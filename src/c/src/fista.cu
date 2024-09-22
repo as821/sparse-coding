@@ -47,7 +47,7 @@ __device__ __forceinline__ float branchless_max(float x, float y) {
 }
 
 template <unsigned int block_sz>
-__device__ void warp_reduce(volatile float* sdata, int tid) {
+__device__ inline void warp_reduce(volatile float* sdata, int tid) {
     if(block_sz >= 64)
         sdata[tid] += sdata[tid + 32];
     if(block_sz >= 32)
@@ -115,70 +115,47 @@ __global__ void y_update(size_t n, float* __restrict__ Y, float* __restrict__ z_
         *Y_loc = Y_val;
     }
 
-    // clean up if n % 4 != 0
-    for(; idx < n; idx += stride) {
-        float Y_val = branchless_max(0.0f, Y[idx] - alpha_L);
+    {
+        // tree-based reduction of thread-local norm values for all threads in the block
+        // https://developer.download.nvidia.com/compute/cuda/1.1-Beta/x86_website/projects/reduction/doc/reduction.pdf
+        extern __shared__ float shmem[];
+        float* shared_diff_norm = shmem;
+        float* shared_prev_z_norm = &shmem[blockDim.x];
 
-        float Y_prev = z_prev[idx];
-        z_prev[idx] = Y_val;
-
-        float diff = Y_val - Y_prev;
-
-        thread_local_prev_z_norm += Y_prev * Y_prev;
-        thread_local_diff_norm += diff * diff;
-        
-        Y_val += mlt * diff;
-        Y[idx] = Y_val;
-    }
-
-    // tree-based reduction of thread-local norm values for all threads in the block
-    // https://developer.download.nvidia.com/compute/cuda/1.1-Beta/x86_website/projects/reduction/doc/reduction.pdf
-    extern __shared__ float shmem[];
-    float* shared_diff_norm = shmem;
-    float* shared_prev_z_norm = &shmem[blockDim.x];
-
-    shared_diff_norm[tid] = thread_local_diff_norm;
-    shared_prev_z_norm[tid] = thread_local_prev_z_norm;
-    __syncthreads();
-
-    // for (int s = blockDim.x >> 1; s > 32; s >>= 1) {
-    //     if (tid < s) {
-    //         shared_diff_norm[tid] += shared_diff_norm[tid + s];
-    //         shared_prev_z_norm[tid] += shared_prev_z_norm[tid + s];
-    //     }
-    //     __syncthreads();
-    // }
-
-
-    if(block_sz >= 512) {
-        if(tid < 256) {
-            shared_diff_norm[tid] += shared_diff_norm[tid + 256];
-            shared_prev_z_norm[tid] += shared_prev_z_norm[tid + 256];
-        }
+        shared_diff_norm[tid] = thread_local_diff_norm;
+        shared_prev_z_norm[tid] = thread_local_prev_z_norm;
         __syncthreads();
-    }
-    if(block_sz >= 256) {
-        if(tid < 128) {
-            shared_diff_norm[tid] += shared_diff_norm[tid + 128];
-            shared_prev_z_norm[tid] += shared_prev_z_norm[tid + 128];
-        }
-        __syncthreads();
-    }
-    if(block_sz >= 128) {
-        if(tid < 64) {
-            shared_diff_norm[tid] += shared_diff_norm[tid + 64];
-            shared_prev_z_norm[tid] += shared_prev_z_norm[tid + 64];
-        }
-        __syncthreads();
-    }
-    if(tid < 32) {
-        warp_reduce<block_sz>(shared_diff_norm, tid);
-        warp_reduce<block_sz>(shared_prev_z_norm, tid);
-    }
 
-    if (tid == 0) {
-        atomicAdd(diff_norm, shared_diff_norm[0]);
-        atomicAdd(prev_z_norm, shared_prev_z_norm[0]);
+        if(block_sz >= 512) {
+            if(tid < 256) {
+                shared_diff_norm[tid] += shared_diff_norm[tid + 256];
+                shared_prev_z_norm[tid] += shared_prev_z_norm[tid + 256];
+            }
+            __syncthreads();
+        }
+        if(block_sz >= 256) {
+            if(tid < 128) {
+                shared_diff_norm[tid] += shared_diff_norm[tid + 128];
+                shared_prev_z_norm[tid] += shared_prev_z_norm[tid + 128];
+            }
+            __syncthreads();
+        }
+        if(block_sz >= 128) {
+            if(tid < 64) {
+                shared_diff_norm[tid] += shared_diff_norm[tid + 64];
+                shared_prev_z_norm[tid] += shared_prev_z_norm[tid + 64];
+            }
+            __syncthreads();
+        }
+        if(tid < 32) {
+            warp_reduce<block_sz>(shared_diff_norm, tid);
+            warp_reduce<block_sz>(shared_prev_z_norm, tid);
+        }
+
+        if (tid == 0) {
+            atomicAdd(diff_norm, shared_diff_norm[0]);
+            atomicAdd(prev_z_norm, shared_prev_z_norm[0]);
+        }
     }
 }
 
@@ -325,19 +302,19 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
 
         // printf("%d: %f %f\n", itr, sqrtf(diff_norm), sqrtf(prev_z_norm));
         
-        // printf("\33[2K\r%d / %d", itr, n_iter);
-        // fflush(stdout);
+        printf("\33[2K\r%d / %d", itr, n_iter);
+        fflush(stdout);
 
 
 
-        // cudaEventSynchronize(k_end);
-        // cuda_log_time_diff("\n\tblas", &start, &blas);
-        // cuda_log_time_diff("\tk_start", &blas, &k_start);
-        // cuda_log_time_diff("\tk_exec", &k_start, &k_exec);
-        // cuda_log_time_diff("\tk_end", &k_exec, &k_end);
-        // float milli = 0;
-        // cudaEventElapsedTime(&milli, k_start, k_exec);
-        // printf("\tbandwidth: %f (GB/s)\n", z_sz * 4 / milli / 1e6);     // 2 read + 2 write per iteration   
+        cudaEventSynchronize(k_end);
+        cuda_log_time_diff("\n\tblas", &start, &blas);
+        cuda_log_time_diff("\tk_start", &blas, &k_start);
+        cuda_log_time_diff("\tk_exec", &k_start, &k_exec);
+        cuda_log_time_diff("\tk_end", &k_exec, &k_end);
+        float milli = 0;
+        cudaEventElapsedTime(&milli, k_start, k_exec);
+        printf("\tbandwidth: %f (GB/s)\n", z_sz * 4 / milli / 1e6);     // 2 read + 2 write per iteration   
 
         if(itr != 0 && norm_ratio < converge_thresh)
             break;
