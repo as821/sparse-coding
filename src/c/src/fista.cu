@@ -63,7 +63,7 @@ __device__ __forceinline__ void warp_reduce(volatile float* sdata, int tid) {
 }
 
 template <unsigned int block_sz, unsigned int n_el_per_thread>
-__global__ void y_update(size_t n, float4* __restrict__ Y, float4* __restrict__ z_prev, float alpha_L, float mlt, float* __restrict__ diff_norm, float* __restrict__ prev_z_norm) {
+__global__ void y_update(size_t n, float4* __restrict__ Y, float4* __restrict__ z_prev, float alpha_L, float* _mlt, float* __restrict__ diff_norm, float* __restrict__ prev_z_norm) {
     int tid = threadIdx.x;
     int index = blockIdx.x * blockDim.x + tid;
     int stride = blockDim.x * gridDim.x;
@@ -110,6 +110,7 @@ __global__ void y_update(size_t n, float4* __restrict__ Y, float4* __restrict__ 
         thread_local_diff_norm += diff.x * diff.x + diff.y * diff.y + diff.z * diff.z + diff.w * diff.w;
 
         // Y_val += mlt * diff;
+        float mlt = *_mlt;
         Y_val.x += mlt * diff.x;
         Y_val.y += mlt * diff.y;
         Y_val.z += mlt * diff.z;
@@ -245,55 +246,83 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
     size_t norm_sz = 2 * sizeof(float);
     CHECK_CUDA_NORET(cudaMalloc((void**)&norms, norm_sz))
 
+    float *d_mlt;
+    CHECK_CUDA_NORET(cudaMalloc(&d_mlt, sizeof(float)));
+
     gettimeofday(&init, NULL);
 
     float tk = 1, tk_prev = 1;
+
+    // TODO(as) graph capture
+
+    cudaStream_t stream;
+    cudaStreamCreate(&stream);
+    CHECK_CUBLAS_NORET(cublasSetStream(handle, stream));
+    // CHECK_CUBLAS_NORET(cublasSetPointerMode(handle, CUBLAS_POINTER_MODE_DEVICE));
+
+    // cudaEvent_t start, blas, k_start, k_exec, k_end;
+    // cudaEventCreate(&start);
+    // cudaEventCreate(&blas);
+    // cudaEventCreate(&k_start);
+    // cudaEventCreate(&k_exec);
+    // cudaEventCreate(&k_end);
+
+    cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
+
+    // residual = x - (z @ basis.T)
+    CHECK_CUDA_NORET(cudaMemcpyAsync((void*)residual, X, x_sz, cudaMemcpyDeviceToDevice, stream))
+    {
+        // cublas assumes column-major but we have row major
+        // https://i.sstatic.net/IvZPe.png
+        float alpha = -1.0f;
+        float beta = 1.0f;
+        CHECK_CUBLAS_NORET(cublasGemmEx(handle, CUBLAS_OP_T, CUBLAS_OP_N, inp_dim, n_samples, dict_sz, &alpha, basis, CUDA_R_32F, dict_sz, Y, CUDA_R_32F, dict_sz, &beta, residual, CUDA_R_32F, inp_dim, compute_type, CUBLAS_GEMM_DEFAULT));    
+    }
+
+    // mm = residual @ basis
+    // z += lr * mm
+    {
+        // cublas assumes column-major but we have row major
+        // https://i.sstatic.net/IvZPe.png
+        float beta = 1.0f;
+        CHECK_CUBLAS_NORET(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, dict_sz, n_samples, inp_dim, &lr, basis, CUDA_R_32F, dict_sz, residual, CUDA_R_32F, inp_dim, &beta, Y, CUDA_R_32F, dict_sz, compute_type, CUBLAS_GEMM_DEFAULT));
+    }
+
+    CHECK_CUDA_NORET(cudaMemsetAsync(norms, 0, norm_sz, stream))
+    
+    const int block_sz = 384;
+    const int n_el_per_thread = 16;
+    int n_blocks = (int)ceil((float)z_n_el / (float)(n_el_per_thread * block_sz));
+    printf("nblocks: %d\n", n_blocks);
+    int smem_sz = 2 * block_sz * sizeof(float);
+    y_update<block_sz, n_el_per_thread><<<n_blocks, block_sz, smem_sz, stream>>>(z_n_el, (float4*)Y, (float4*)z_prev, alpha_L, d_mlt, norms, &norms[1]);
+
+    cudaGraph_t graph;
+    cudaGraphExec_t instance;
+    CHECK_CUDA_NORET(cudaStreamEndCapture(stream, &graph));
+    CHECK_CUDA_NORET(cudaGraphInstantiate(&instance, graph, NULL, NULL, 0));
+
+
+
+
+
     int itr;
     for(itr = 0; itr < n_iter; itr++) {
 
-        cudaEvent_t start, blas, k_start, k_exec, k_end;
-        cudaEventCreate(&start);
-        cudaEventCreate(&blas);
-        cudaEventCreate(&k_start);
-        cudaEventCreate(&k_exec);
-        cudaEventCreate(&k_end);
-        cudaEventRecord(start);
-
-        // residual = x - (z @ basis.T)
-        CHECK_CUDA_NORET(cudaMemcpy((void*)residual, X, x_sz, cudaMemcpyDeviceToDevice))
-        {
-            // cublas assumes column-major but we have row major
-            // https://i.sstatic.net/IvZPe.png
-            float alpha = -1.0f;
-            float beta = 1.0f;
-            CHECK_CUBLAS_NORET(cublasGemmEx(handle, CUBLAS_OP_T, CUBLAS_OP_N, inp_dim, n_samples, dict_sz, &alpha, basis, CUDA_R_32F, dict_sz, Y, CUDA_R_32F, dict_sz, &beta, residual, CUDA_R_32F, inp_dim, compute_type, CUBLAS_GEMM_DEFAULT));    
-        }
-
-        // mm = residual @ basis
-        // z += lr * mm
-        {
-            // cublas assumes column-major but we have row major
-            // https://i.sstatic.net/IvZPe.png
-            float beta = 1.0f;
-            CHECK_CUBLAS_NORET(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, dict_sz, n_samples, inp_dim, &lr, basis, CUDA_R_32F, dict_sz, residual, CUDA_R_32F, inp_dim, &beta, Y, CUDA_R_32F, dict_sz, compute_type, CUBLAS_GEMM_DEFAULT));
-        }
-
-        cudaEventRecord(blas);
+        
 
         // Y-update multiplier
         tk_prev = tk;
         tk = (1 + sqrtf(1 + 4 * tk * tk)) / 2;
         float mlt = (tk_prev - 1) / tk;
-        CHECK_CUDA_NORET(cudaMemset(norms, 0, norm_sz))
-        cudaEventRecord(k_start);
-        
-        const int block_sz = 384;
-        const int n_el_per_thread = 16;
-        int n_blocks = (int)ceil((float)z_n_el / (float)(n_el_per_thread * block_sz));
-        printf("nblocks: %d\n", n_blocks);
-        int smem_sz = 2 * block_sz * sizeof(float);
-        y_update<block_sz, n_el_per_thread><<<n_blocks, block_sz, smem_sz>>>(z_n_el, (float4*)Y, (float4*)z_prev, alpha_L, mlt, norms, &norms[1]);
-        cudaEventRecord(k_exec);
+        CHECK_CUDA_NORET(cudaMemcpyAsync(d_mlt, &mlt, sizeof(float), cudaMemcpyHostToDevice, stream));
+
+
+        // TODO(as) graph replay
+        CHECK_CUDA_NORET(cudaGraphLaunch(instance, stream));
+        CHECK_CUDA_NORET(cudaStreamSynchronize(stream));
+
+
 
         CHECK_CUDA_NORET(cudaMemcpy((void*)norms_host, norms, norm_sz, cudaMemcpyDeviceToHost))
 
@@ -302,29 +331,28 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
         float prev_z_norm = norms_host[1];
         float norm_ratio = diff_norm / prev_z_norm;
         norm_ratio = sqrtf(norm_ratio);         // equivalent to sqrtf(diff_norm) / sqrtf(prev_z_norm)
-        cudaEventRecord(k_end);
-
 
         // printf("%d: %f %f\n", itr, sqrtf(diff_norm), sqrtf(prev_z_norm));
         
         printf("\33[2K\r%d / %d", itr, n_iter);
         fflush(stdout);
 
-
-
-        cudaEventSynchronize(k_end);
-        cuda_log_time_diff("\n\tblas", &start, &blas);
-        cuda_log_time_diff("\tk_start", &blas, &k_start);
-        cuda_log_time_diff("\tk_exec", &k_start, &k_exec);
-        cuda_log_time_diff("\tk_end", &k_exec, &k_end);
-        float milli = 0;
-        cudaEventElapsedTime(&milli, k_start, k_exec);
-        printf("\tbandwidth: %f (GB/s)\n", z_sz * 4 / milli / 1e6);     // 2 read + 2 write per iteration   
+        // cuda_log_time_diff("\n\tblas", &start, &blas);
+        // cuda_log_time_diff("\tk_start", &blas, &k_start);
+        // cuda_log_time_diff("\tk_exec", &k_start, &k_exec);
+        // cuda_log_time_diff("\tk_end", &k_exec, &k_end);
+        // float milli = 0;
+        // cudaEventElapsedTime(&milli, k_start, k_exec);
+        // printf("\tbandwidth: %f (GB/s)\n", z_sz * 4 / milli / 1e6);     // 2 read + 2 write per iteration   
 
         if(itr != 0 && norm_ratio < converge_thresh)
             break;
     }
     // printf("\n");
+
+    CHECK_CUDA_NORET(cudaGraphExecDestroy(instance));
+    CHECK_CUDA_NORET(cudaGraphDestroy(graph));
+    CHECK_CUDA_NORET(cudaStreamDestroy(stream));
 
     // memcpy(Z, z_prev, dict_sz * n_samples * sizeof(float));
     CHECK_CUDA_NORET(cudaMemcpy((void*)Z_host, z_prev, z_sz, cudaMemcpyDeviceToHost))
