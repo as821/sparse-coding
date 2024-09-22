@@ -62,7 +62,7 @@ __device__ __forceinline__ void warp_reduce(volatile float* sdata, int tid) {
         sdata[tid] += sdata[tid + 1];
 }
 
-template <unsigned int block_sz>
+template <unsigned int block_sz, unsigned int n_el_per_thread>
 __global__ void y_update(size_t n, float4* __restrict__ Y, float4* __restrict__ z_prev, float alpha_L, float mlt, float* __restrict__ diff_norm, float* __restrict__ prev_z_norm) {
     int tid = threadIdx.x;
     int index = blockIdx.x * blockDim.x + tid;
@@ -72,7 +72,13 @@ __global__ void y_update(size_t n, float4* __restrict__ Y, float4* __restrict__ 
     float thread_local_prev_z_norm = 0;
 
     size_t n_div_4 = n / 4;
-    for(int idx = index; idx < n_div_4; idx += stride) {
+
+    #pragma unroll
+    for(int el_idx = 0; el_idx < n_el_per_thread; el_idx++) {
+        int idx = index + el_idx * stride;
+        if(idx >= n_div_4)
+            break;
+        
         float4* Y_loc = &Y[idx];
         float4 Y_vec = *Y_loc;
         
@@ -286,9 +292,13 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
         
         const int block_sz = 32;
         // int n_blocks = (ceil(z_n_el / 4) + block_sz - 1) / block_sz;       // ceil(z_n_el / block_sz)
-        int n_blocks = 8192;
+        // int n_blocks = 8192;
+        
+        const int n_el_per_thread = 16;
+        int n_blocks = (int)ceil((float)z_n_el / (float)(n_el_per_thread * block_sz));
+        printf("nblocks: %d\n", n_blocks);
         int smem_sz = 2 * block_sz * sizeof(float);
-        y_update<block_sz><<<n_blocks, block_sz, smem_sz>>>(z_n_el, (float4*)Y, (float4*)z_prev, alpha_L, mlt, norms, &norms[1]);
+        y_update<block_sz, n_el_per_thread><<<n_blocks, block_sz, smem_sz>>>(z_n_el, (float4*)Y, (float4*)z_prev, alpha_L, mlt, norms, &norms[1]);
         cudaEventRecord(k_exec);
 
         CHECK_CUDA_NORET(cudaMemcpy((void*)norms_host, norms, norm_sz, cudaMemcpyDeviceToHost))
