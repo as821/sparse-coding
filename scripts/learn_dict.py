@@ -4,6 +4,8 @@ from tqdm import tqdm
 import numpy as np
 import time
 import wandb
+import matplotlib
+matplotlib.use('Agg')       # non-interactive backend for matplotlib
 import matplotlib.pyplot as plt
 import torch.nn as nn
 import torch.nn.functional as F
@@ -112,6 +114,7 @@ def main(args):
         running_loss = 0
         c = 0
         for img_batch in tqdm(dataloader, desc='training', total=len(dataloader)):
+            s = time.time()
             img_batch = img_batch.to(device)
             with torch.no_grad():            
                 if c_impl_available():
@@ -128,18 +131,24 @@ def main(args):
                 else:
                     z, n_iter = FISTA(img_batch, basis.weight, args.alpha, fista_max_iter, args.fista_conv, device, lr=args.fista_lr)
                 vis_dict['fista_niter'] = n_iter
+            t1 = time.time()
             pred = basis(z)
-
+            t2 = time.time()
             loss = ((img_batch - pred) ** 2).sum()
             running_loss += loss.item()
+            t3 = time.time()
+            
             loss.backward()
             optim.step()
             basis.zero_grad()
+            t4 = time.time()
+
 
             with torch.no_grad():
                 basis.weight.data = F.normalize(basis.weight.data, dim=0)
-
             c += 1
+
+            # print(f"{t1 - s} {t2 - t1} {t3 - t2} {t4 - t3}")
 
         vis_dict['loss'] = running_loss / c
 

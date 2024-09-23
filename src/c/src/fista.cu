@@ -442,9 +442,9 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
     gettimeofday(&exec, NULL);
 
 
-    log_time_diff("\n\n\thandle", &actual_start, &handle_time);
-    log_time_diff("\tinit", &handle_time, &init);
-    log_time_diff("\texec", &init, &exec);
+    // log_time_diff("\n\n\thandle", &actual_start, &handle_time);
+    // log_time_diff("\tinit", &handle_time, &init);
+    // log_time_diff("\texec", &init, &exec);
     return itr;
 }
 }
