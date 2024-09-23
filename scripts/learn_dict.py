@@ -100,9 +100,7 @@ def main(args):
     elif args.dataset == "cifar10":
         dset = CIFAR10RandomPatch(args.nsamples, args.patch_sz, args.patch_sz, fpath=args.path)
         basis_shape *= 3
-    dataloader = DataLoader(dset, batch_size=args.batch_sz)
-
-
+    dataloader = DataLoader(dset, batch_size=args.batch_sz, num_workers=4)
 
     basis = nn.Linear(args.dict_sz, basis_shape, bias=False, dtype=torch.float32).to(device)
     with torch.no_grad():

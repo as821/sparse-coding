@@ -11,7 +11,7 @@
 #include <cublas_v2.h>
 #include <cuda.h>
 
-
+#define DEBUG false
 
 void print_stack_trace();
 #define CHECK(x)                                                                                    \
@@ -345,12 +345,14 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
     for(itr = 0; itr < n_iter; itr++) {
 
         cudaEvent_t start, blas, k_start, k_exec, k_end;
-        cudaEventCreate(&start);
-        cudaEventCreate(&blas);
-        cudaEventCreate(&k_start);
-        cudaEventCreate(&k_exec);
-        cudaEventCreate(&k_end);
-        cudaEventRecord(start);
+        if(DEBUG) {    
+            cudaEventCreate(&start);
+            cudaEventCreate(&blas);
+            cudaEventCreate(&k_start);
+            cudaEventCreate(&k_exec);
+            cudaEventCreate(&k_end);
+            cudaEventRecord(start);
+        }
 
         // residual = x - (z @ basis.T)
         CHECK_CUDA_NORET(cudaMemcpy((void*)residual, X, x_sz, cudaMemcpyDeviceToDevice))
@@ -371,22 +373,22 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
             CHECK_CUBLAS_NORET(cublasGemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, dict_sz, n_samples, inp_dim, &lr, basis, CUDA_R_32F, dict_sz, residual, CUDA_R_32F, inp_dim, &beta, Y, CUDA_R_32F, dict_sz, compute_type, CUBLAS_GEMM_DEFAULT));
         }
 
-        cudaEventRecord(blas);
+        if(DEBUG) cudaEventRecord(blas);
 
         // Y-update multiplier
         tk_prev = tk;
         tk = (1 + sqrtf(1 + 4 * tk * tk)) / 2;
         float mlt = (tk_prev - 1) / tk;
         CHECK_CUDA_NORET(cudaMemset(norms, 0, norm_sz))
-        cudaEventRecord(k_start);
+        if(DEBUG) cudaEventRecord(k_start);
         
         const int block_sz = 384;
         const int n_el_per_thread = 16;
         int n_blocks = (int)ceil((float)z_n_el / (float)(n_el_per_thread * block_sz));
-        printf("nblocks: %d\n", n_blocks);
+        if(DEBUG) printf("nblocks: %d\n", n_blocks);
         int smem_sz = 2 * block_sz * sizeof(float);
         y_update<block_sz, n_el_per_thread><<<n_blocks, block_sz, smem_sz>>>(z_n_el, (float4*)Y, (float4*)z_prev, alpha_L, mlt, norms, &norms[1]);
-        cudaEventRecord(k_exec);
+        if(DEBUG) cudaEventRecord(k_exec);
 
         CHECK_CUDA_NORET(cudaMemcpy((void*)norms_host, norms, norm_sz, cudaMemcpyDeviceToHost))
 
@@ -395,24 +397,28 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
         float prev_z_norm = norms_host[1];
         float norm_ratio = diff_norm / prev_z_norm;
         norm_ratio = sqrtf(norm_ratio);         // equivalent to sqrtf(diff_norm) / sqrtf(prev_z_norm)
-        cudaEventRecord(k_end);
+        if(DEBUG) cudaEventRecord(k_end);
 
 
-        // printf("%d: %f %f\n", itr, sqrtf(diff_norm), sqrtf(prev_z_norm));
-        
-        printf("\33[2K\r%d / %d", itr, n_iter);
-        fflush(stdout);
+        if(DEBUG) {
+            printf("\33[2K\r%d / %d", itr, n_iter);
+            fflush(stdout);
 
+            cudaEventSynchronize(k_end);
+            cuda_log_time_diff("\n\tblas", &start, &blas);
+            cuda_log_time_diff("\tk_start", &blas, &k_start);
+            cuda_log_time_diff("\tk_exec", &k_start, &k_exec);
+            cuda_log_time_diff("\tk_end", &k_exec, &k_end);
+            float milli = 0;
+            cudaEventElapsedTime(&milli, k_start, k_exec);
+            printf("\tbandwidth: %f (GB/s)\n", z_sz * 4 / milli / 1e6);     // 2 read + 2 write per iteration   
 
-
-        cudaEventSynchronize(k_end);
-        cuda_log_time_diff("\n\tblas", &start, &blas);
-        cuda_log_time_diff("\tk_start", &blas, &k_start);
-        cuda_log_time_diff("\tk_exec", &k_start, &k_exec);
-        cuda_log_time_diff("\tk_end", &k_exec, &k_end);
-        float milli = 0;
-        cudaEventElapsedTime(&milli, k_start, k_exec);
-        printf("\tbandwidth: %f (GB/s)\n", z_sz * 4 / milli / 1e6);     // 2 read + 2 write per iteration   
+            cudaEventDestroy(start);
+            cudaEventDestroy(blas);
+            cudaEventDestroy(k_start);
+            cudaEventDestroy(k_exec);
+            cudaEventDestroy(k_end);
+        }
 
         if(itr != 0 && norm_ratio < converge_thresh)
             break;
