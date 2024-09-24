@@ -119,7 +119,7 @@ def main(args):
         vis_dict['mean_dict_active'] = n_activations_per_dict.float().mean()
         vis_dict['n_zero_dict_active'] = (n_activations_per_dict == 0).to(int).sum()
 
-        if e % 5 == 4 and args.wandb:
+        if True: # e % 5 == 4 and args.wandb:
             assert args.dataset == "cifar10"
             fig = plot_color(basis.weight.T.reshape(args.dict_sz, args.patch_sz, args.patch_sz, 3).cpu().data.numpy(), args.dict_sz, args.patch_sz)
             vis_dict["dict"] = wandb.Image(plt)
