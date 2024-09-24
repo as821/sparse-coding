@@ -23,30 +23,6 @@ from dataset import NatPatchDataset, CIFAR10RandomPatch
 from cinterface import cu_fista, fista, c_impl_available
 from baseline import FISTA
 
-
-def plot_rf(rf, out_dim, M):
-    rf = rf.reshape(out_dim, -1)
-    rf = rf.T / np.abs(rf).max(axis=1)
-    rf = rf.T
-    rf = rf.reshape(out_dim, M, M)
-    n = int(np.ceil(np.sqrt(rf.shape[0])))
-    fig, axes = plt.subplots(nrows=n, ncols=n, sharex=True, sharey=True)
-    fig.set_size_inches(10, 10)
-    for i in range(rf.shape[0]):
-        ax = axes[i // n][i % n]
-        ax.imshow(rf[i], cmap='gray', vmin=-1, vmax=1)
-        ax.set_xticks([])
-        ax.set_yticks([])
-        ax.set_aspect('equal')
-    for j in range(rf.shape[0], n * n):
-        ax = axes[j // n][j % n]
-        ax.imshow(np.ones_like(rf[0]) * -1, cmap='gray', vmin=-1, vmax=1)
-        ax.set_xticks([])
-        ax.set_yticks([])
-        ax.set_aspect('equal')
-    fig.subplots_adjust(wspace=0.0, hspace=0.0)
-    return fig
-
 def plot_color(rf, out_dim, M):
     
     normalized = np.zeros_like(rf)
@@ -80,7 +56,14 @@ def plot_color(rf, out_dim, M):
     fig.subplots_adjust(wspace=0.0, hspace=0.0)
     return fig
 
-
+def get_alpha(step, args, dataloader):
+    if args.alpha >= 0:
+        return args.alpha
+    if step < args.alpha_constant_steps:
+        return args.alpha_initial
+    else:
+        progress = (step - args.alpha_constant_steps) / (args.epoch * len(dataloader) - args.alpha_constant_steps)
+        return args.alpha_initial + (args.alpha_final - args.alpha_initial) * progress
 
 def main(args):
     timestamp = time.time()
@@ -109,6 +92,7 @@ def main(args):
         basis.weight.data = F.normalize(basis.weight.data, dim=0)
     optim = torch.optim.Adam([{'params': basis.weight, "lr": args.lr}])
     
+    step_cnt = 0
     for e in range(args.epoch):
         vis_dict = {}
         running_loss = 0
@@ -116,9 +100,11 @@ def main(args):
         for img_batch in tqdm(dataloader, desc='training', total=len(dataloader)):
             s = time.time()
             img_batch = img_batch.to(device)
-            with torch.no_grad():            
+            with torch.no_grad():
+                alpha = get_alpha(step_cnt, args, dataloader)
+                step_cnt += 1
                 if c_impl_available():
-                    z, n_iter, _ = cu_fista(img_batch, basis.weight, args.alpha, fista_max_iter, args.fista_conv, args.fista_lr)
+                    z, n_iter, _ = cu_fista(img_batch, basis.weight, alpha, fista_max_iter, args.fista_conv, args.fista_lr)
                 
                     if args.cuda_profile:
                         sys.exit(1)
@@ -129,8 +115,9 @@ def main(args):
                     # assert n_iter == n_iter_gt, f"{n_iter} != {n_iter_gt}"
                     # assert np.all(np.abs(z_gt.cpu().numpy() - z.numpy()) < 0.1), f"{np.abs(z_gt.cpu().numpy() - z.numpy()).max()} >= 0.1"
                 else:
-                    z, n_iter = FISTA(img_batch, basis.weight, args.alpha, fista_max_iter, args.fista_conv, device, lr=args.fista_lr)
+                    z, n_iter = FISTA(img_batch, basis.weight, alpha, fista_max_iter, args.fista_conv, device, lr=args.fista_lr)
                 vis_dict['fista_niter'] = n_iter
+                vis_dict['alpha'] = alpha
             t1 = time.time()
             pred = basis(z)
             t2 = time.time()
@@ -156,6 +143,13 @@ def main(args):
         vis_dict['max_sample_active'] = n_activations_per_sample.max()
         vis_dict['min_sample_active'] = n_activations_per_sample.min()
         vis_dict['mean_sample_active'] = n_activations_per_sample.float().mean()
+        vis_dict['n_zero_sample_active'] = (n_activations_per_sample == 0).to(int).sum()
+
+        n_activations_per_dict = (z != 0).to(int).sum(dim=0)
+        vis_dict['max_dict_active'] = n_activations_per_dict.max()
+        vis_dict['min_dict_active'] = n_activations_per_dict.min()
+        vis_dict['mean_dict_active'] = n_activations_per_dict.float().mean()
+        vis_dict['n_zero_dict_active'] = (n_activations_per_dict == 0).to(int).sum()
 
         if e % 5 == 4 and args.wandb:
             # plotting
@@ -184,9 +178,8 @@ if __name__ == "__main__":
     parser.add_argument('--nsamples', default=20, type=int, help="batch size")
     parser.add_argument('--dict_sz', default=512, type=int, help="dictionary size")
     parser.add_argument('--patch_sz', default=10, type=int, help="patch size")
-    parser.add_argument('--epoch', default=100, type=int, help="number of epochs")
+    parser.add_argument('--epoch', default=50, type=int, help="number of epochs")
     parser.add_argument('--lr', default=1e-2, type=float, help="dictionary learning rate")
-    parser.add_argument('--alpha', default=5e-3, type=float, help="alpha parameter for FISTA")
     parser.add_argument('--fista_conv', default=0.01, type=float, help="convergence threshold for FISTA")
     parser.add_argument('--fista_lr', default=0.001, type=float, help="learning rate for FISTA")
     parser.add_argument('--dataset', default='cifar10', choices=['nat', 'cifar10'], help='dataset to use')
@@ -194,6 +187,10 @@ if __name__ == "__main__":
     parser.add_argument('--cuda_profile', action="store_true")
     parser.add_argument('--batch_sz', default=2048, type=int, help="batch size")
 
+    parser.add_argument('--alpha', default=-1, type=float, help="constant alpha parameter for FISTA, -1 to use scheduled alpha instead")
+    parser.add_argument('--alpha_initial', type=float, default=0.001, help='initial alpha value')
+    parser.add_argument('--alpha_final', type=float, default=0.05, help='final alpha value')
+    parser.add_argument('--alpha_constant_steps', type=int, default=150, help='# steps to keep alpha constant')
 
 
     main(parser.parse_args())
