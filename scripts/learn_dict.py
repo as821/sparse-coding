@@ -22,39 +22,7 @@ sys.path.append(os.path.join(os.getcwd(), 'src/c'))
 from dataset import NatPatchDataset, CIFAR10RandomPatch
 from cinterface import cu_fista, fista, c_impl_available
 from baseline import FISTA
-
-def plot_color(rf, out_dim, M):
-    
-    normalized = np.zeros_like(rf)
-    for i in range(3):  # For each color channel
-        channel = rf[:, :,:,i]
-        normalized[:, :,:,i] = (channel - channel.min()) / (channel.max() - channel.min())
-    
-    
-    
-    # rf = rf.reshape(out_dim, -1)
-    # rf = rf.T / np.abs(rf).max(axis=1)
-    # rf = rf.T
-    # rf = rf.reshape(out_dim, M, M, 3)
-
-    n = 10 #int(np.ceil(np.sqrt(normalized.shape[0])))
-    fig, axes = plt.subplots(nrows=n, ncols=n, sharex=True, sharey=True)
-    fig.set_size_inches(10, 10)
-    for i in range(min(n * n, normalized.shape[0])):
-        ax = axes[i // n][i % n]
-        ax.imshow(normalized[i]) #, cmap='gray', vmin=-1, vmax=1)
-        ax.set_xticks([])
-        ax.set_yticks([])
-        ax.set_aspect('equal')
-    if n * n > normalized.shape[0]:
-        for j in range(normalized.shape[0], n * n):
-            ax = axes[j // n][j % n]
-            ax.imshow(np.ones_like(normalized[0]) * -1, cmap='gray', vmin=-1, vmax=1)
-            ax.set_xticks([])
-            ax.set_yticks([])
-            ax.set_aspect('equal')
-    fig.subplots_adjust(wspace=0.0, hspace=0.0)
-    return fig
+from plot import plot_color, plot_patch_recon
 
 def get_alpha(step, args, dataloader):
     if args.alpha >= 0:
@@ -152,12 +120,13 @@ def main(args):
         vis_dict['n_zero_dict_active'] = (n_activations_per_dict == 0).to(int).sum()
 
         if e % 5 == 4 and args.wandb:
-            # plotting
-            if args.dataset == "cifar10":
-                fig = plot_color(basis.weight.T.reshape(args.dict_sz, args.patch_sz, args.patch_sz, 3).cpu().data.numpy(), args.dict_sz, args.patch_sz)
-            else:
-                fig = plot_rf(basis.weight.T.reshape(args.dict_sz, args.patch_sz, args.patch_sz).cpu().data.numpy(), args.dict_sz, args.patch_sz)
+            assert args.dataset == "cifar10"
+            fig = plot_color(basis.weight.T.reshape(args.dict_sz, args.patch_sz, args.patch_sz, 3).cpu().data.numpy(), args.dict_sz, args.patch_sz)
             vis_dict["dict"] = wandb.Image(plt)
+            plt.close()
+
+            fig = plot_patch_recon(args, basis.weight.reshape(args.patch_sz, args.patch_sz, 3, args.dict_sz).cpu().data, img_batch.cpu(), z)
+            vis_dict["recon"] = wandb.Image(plt)
             plt.close()
 
         if args.wandb:
