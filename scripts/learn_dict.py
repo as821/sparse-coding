@@ -57,6 +57,8 @@ def main(args):
     dataloader = DataLoader(dset, batch_size=args.batch_sz, num_workers=4)
 
     basis = nn.Linear(args.dict_sz, basis_shape, bias=False, dtype=torch.float32).to(device)
+    if args.init_unif != 0:
+        nn.init.uniform_(basis.weight, a=-args.init_unif, b=args.init_unif, generator=None)
     with torch.no_grad():
         basis.weight.data = F.normalize(basis.weight.data, dim=0)
     optim = torch.optim.Adam([{'params': basis.weight, "lr": args.lr}])
@@ -160,6 +162,7 @@ if __name__ == "__main__":
     parser.add_argument('--wandb', action="store_true")
     parser.add_argument('--cuda_profile', action="store_true")
     parser.add_argument('--batch_sz', default=2048, type=int, help="batch size")
+    parser.add_argument('--init_unif', default=0, type=float, help="uniform initialization range")
 
     parser.add_argument('--alpha', default=-1, type=float, help="constant alpha parameter for FISTA, -1 to use scheduled alpha instead")
     parser.add_argument('--alpha_initial', type=float, default=0.001, help='initial alpha value')
