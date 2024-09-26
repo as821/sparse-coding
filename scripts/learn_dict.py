@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+import math
 
 
 import sys
@@ -101,36 +102,40 @@ def main(args):
 
             with torch.no_grad():
                 basis.weight.data = F.normalize(basis.weight.data, dim=0)
-            c += 1
 
             # print(f"{t1 - s} {t2 - t1} {t3 - t2} {t4 - t3}")
+            c += 1
 
-        vis_dict['loss'] = running_loss / c
+            log_freq = 50
+            if (step_cnt % log_freq == 0 or c == 1) and args.wandb:
+                vis_dict['loss'] = running_loss / c
 
-        n_activations_per_sample = (z != 0).to(int).sum(dim=1)
-        vis_dict['max_sample_active'] = n_activations_per_sample.max()
-        vis_dict['min_sample_active'] = n_activations_per_sample.min()
-        vis_dict['mean_sample_active'] = n_activations_per_sample.float().mean()
-        vis_dict['n_zero_sample_active'] = (n_activations_per_sample == 0).to(int).sum()
+                n_activations_per_sample = (z != 0).to(int).sum(dim=1)
+                vis_dict['max_sample_active'] = n_activations_per_sample.max()
+                vis_dict['min_sample_active'] = n_activations_per_sample.min()
+                vis_dict['mean_sample_active'] = n_activations_per_sample.float().mean()
+                vis_dict['n_zero_sample_active'] = (n_activations_per_sample == 0).to(int).sum()
 
-        n_activations_per_dict = (z != 0).to(int).sum(dim=0)
-        vis_dict['max_dict_active'] = n_activations_per_dict.max()
-        vis_dict['min_dict_active'] = n_activations_per_dict.min()
-        vis_dict['mean_dict_active'] = n_activations_per_dict.float().mean()
-        vis_dict['n_zero_dict_active'] = (n_activations_per_dict == 0).to(int).sum()
+                n_activations_per_dict = (z != 0).to(int).sum(dim=0)
+                vis_dict['max_dict_active'] = n_activations_per_dict.max()
+                vis_dict['min_dict_active'] = n_activations_per_dict.min()
+                vis_dict['mean_dict_active'] = n_activations_per_dict.float().mean()
+                vis_dict['n_zero_dict_active'] = (n_activations_per_dict == 0).to(int).sum()
 
-        if True: # e % 5 == 4 and args.wandb:
-            assert args.dataset == "cifar10"
-            fig = plot_color(basis.weight.T.reshape(args.dict_sz, args.patch_sz, args.patch_sz, 3).cpu().data.numpy(), args.dict_sz, args.patch_sz)
-            vis_dict["dict"] = wandb.Image(plt)
-            plt.close()
+                step_div = math.floor(step_cnt / log_freq)
+                if step_div % 5 == 4:
+                    assert args.dataset == "cifar10"
+                    fig = plot_color(basis.weight.T.reshape(args.dict_sz, args.patch_sz, args.patch_sz, 3).cpu().data.numpy(), args.dict_sz, args.patch_sz)
+                    vis_dict["dict"] = wandb.Image(plt)
+                    plt.close()
 
-            fig = plot_patch_recon(args, basis.weight.reshape(args.patch_sz, args.patch_sz, 3, args.dict_sz).cpu().data, img_batch.cpu(), z)
-            vis_dict["recon"] = wandb.Image(plt)
-            plt.close()
+                    fig = plot_patch_recon(args, basis.weight.reshape(args.patch_sz, args.patch_sz, 3, args.dict_sz).cpu().data, img_batch.cpu(), z)
+                    vis_dict["recon"] = wandb.Image(plt)
+                    plt.close()
 
-        if args.wandb:
-            wandb.log(vis_dict, step=e)
+                wandb.log(vis_dict, step=step_cnt)
+                
+
         if e % 10 == 9 and args.ckpt_path != "":
             torch.save(basis, args.ckpt_path + f"/{timestamp}/ckpt_{e}.pt")
     
