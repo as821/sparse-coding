@@ -59,8 +59,9 @@ def main(args):
     basis = nn.Linear(args.dict_sz, basis_shape, bias=False, dtype=torch.float32).to(device)
     with torch.no_grad():
         basis.weight.data = F.normalize(basis.weight.data, dim=0)
-    optim = torch.optim.Adam([{'params': basis.weight, "lr": args.lr}])
     
+    optim = torch.optim.LBFGS([{'params': basis.weight, "lr": args.lr}])
+
     step_cnt = 0
     for e in range(args.epoch):
         vis_dict = {}
@@ -69,46 +70,49 @@ def main(args):
         for img_batch in tqdm(dataloader, desc='training', total=len(dataloader)):
             s = time.time()
             img_batch = img_batch.to(device)
-            with torch.no_grad():
-                alpha = get_alpha(step_cnt, args, dataloader)
-                step_cnt += 1
-                if c_impl_available():
-                    z, n_iter, _ = cu_fista(img_batch, basis.weight, alpha, fista_max_iter, args.fista_conv, args.fista_lr)
-                
-                    if args.cuda_profile:
-                        sys.exit(1)
 
-                    # TODO(as): debugging
-                    # foo = basis.weight.clone()
-                    # z_gt, n_iter_gt = FISTA(img_batch.clone().to("cuda"), foo.to("cuda"), args.alpha, fista_max_iter, args.fista_conv, "cuda", lr=args.fista_lr)
-                    # assert n_iter == n_iter_gt, f"{n_iter} != {n_iter_gt}"
-                    # assert np.all(np.abs(z_gt.cpu().numpy() - z.numpy()) < 0.1), f"{np.abs(z_gt.cpu().numpy() - z.numpy()).max()} >= 0.1"
-                else:
-                    z, n_iter = FISTA(img_batch, basis.weight, alpha, fista_max_iter, args.fista_conv, device, lr=args.fista_lr)
-                vis_dict['fista_niter'] = n_iter
-                vis_dict['alpha'] = alpha
-            t1 = time.time()
-            pred = basis(z)
-            t2 = time.time()
-            loss = ((img_batch - pred) ** 2).sum()
+            def closure():
+                optim.zero_grad()
+                with torch.no_grad():
+                    basis.weight.data = F.normalize(basis.weight.data, dim=0)
+                    alpha = get_alpha(step_cnt, args, dataloader)
+                    if c_impl_available():
+                        z, n_iter, _ = cu_fista(img_batch, basis.weight, alpha, fista_max_iter, args.fista_conv, args.fista_lr)
+                        if args.cuda_profile:
+                            sys.exit(1)
+                    else:
+                        z, n_iter = FISTA(img_batch, basis.weight, alpha, fista_max_iter, args.fista_conv, device, lr=args.fista_lr)
+                pred = basis(z)
+                loss = ((img_batch - pred) ** 2).sum()
+                loss.backward()
+                return loss
+
+            loss = optim.step(closure)
             running_loss += loss.item()
-            t3 = time.time()
-            
-            loss.backward()
-            optim.step()
-            basis.zero_grad()
-            t4 = time.time()
-
+            step_cnt += 1
 
             with torch.no_grad():
                 basis.weight.data = F.normalize(basis.weight.data, dim=0)
 
-            # print(f"{t1 - s} {t2 - t1} {t3 - t2} {t4 - t3}")
             c += 1
 
-            log_freq = 50
+            log_freq = 1
             if (step_cnt % log_freq == 0 or c == 1) and args.wandb:
                 vis_dict['loss'] = running_loss / c
+
+
+                with torch.no_grad():
+                    alpha = get_alpha(step_cnt, args, dataloader)
+                    if c_impl_available():
+                        z, n_iter, _ = cu_fista(img_batch, basis.weight, alpha, fista_max_iter, args.fista_conv, args.fista_lr)
+                        if args.cuda_profile:
+                            sys.exit(1)
+
+                    else:
+                        z, n_iter = FISTA(img_batch, basis.weight, alpha, fista_max_iter, args.fista_conv, device, lr=args.fista_lr)
+                    vis_dict['fista_niter'] = n_iter
+                    vis_dict['alpha'] = alpha
+
 
                 n_activations_per_sample = (z != 0).to(int).sum(dim=1)
                 vis_dict['max_sample_active'] = n_activations_per_sample.max()
@@ -130,7 +134,8 @@ def main(args):
                     plt.close()
 
                     fig = plot_patch_recon(args, basis.weight.reshape(args.patch_sz, args.patch_sz, 3, args.dict_sz).cpu().data, img_batch.cpu(), z)
-                    vis_dict["recon"] = wandb.Image(plt)
+                    if fig is not None:
+                        vis_dict["recon"] = wandb.Image(plt)
                     plt.close()
 
                 wandb.log(vis_dict, step=step_cnt)
