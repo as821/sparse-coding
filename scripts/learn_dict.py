@@ -172,6 +172,6 @@ if __name__ == "__main__":
     parser.add_argument('--alpha_initial', type=float, default=0.001, help='initial alpha value')
     parser.add_argument('--alpha_final', type=float, default=0.05, help='final alpha value')
     parser.add_argument('--alpha_constant_steps', type=int, default=150, help='# steps to keep alpha constant')
-    parser.add_argument('--dropout', default=0.01, type=float, help="dropout rate, <=0 to disable")
+    parser.add_argument('--dropout', default=0, type=float, help="dropout rate, <=0 to disable")
 
     main(parser.parse_args())
