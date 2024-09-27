@@ -54,7 +54,7 @@ def main(args):
     elif args.dataset == "cifar10":
         dset = CIFAR10RandomPatch(args.nsamples, args.patch_sz, args.patch_sz, fpath=args.path)
         basis_shape *= 3
-    dataloader = DataLoader(dset, batch_size=args.batch_sz, num_workers=4)
+    dataloader = DataLoader(dset, batch_size=args.batch_sz, drop_last=True, num_workers=4)
 
     basis = nn.Linear(args.dict_sz, basis_shape, bias=False, dtype=torch.float32).to(device)
     if args.init_unif != 0:
@@ -112,7 +112,7 @@ def main(args):
             # print(f"{t1 - s} {t2 - t1} {t3 - t2} {t4 - t3}")
             c += 1
 
-            log_freq = 50
+            log_freq = 5
             if (step_cnt % log_freq == 0 or c == 1) and args.wandb:
                 vis_dict['loss'] = running_loss / c
 

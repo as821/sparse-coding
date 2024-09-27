@@ -7,6 +7,7 @@ import numpy as np
 from scipy.io import loadmat
 import torchvision
 import torchvision.transforms as transforms
+from tqdm import tqdm
 
 class RandomPatchDataset(Dataset):
     def __init__(self, N:int, width:int, height:int, fpath:str, border:int=4):
@@ -74,7 +75,7 @@ class CIFAR10RandomPatch(RandomPatchDataset):
         # generate N random patches from the dataset images (patch mean removed)
         counter = 0
 
-        for i in range(self.N):
+        for i in tqdm(range(self.N)):
             img = X[i % n_img]
             x = np.random.randint(self.border, img_size - self.width - self.border)
             y = np.random.randint(self.border, img_size - self.height - self.border)
