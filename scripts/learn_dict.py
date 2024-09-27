@@ -62,6 +62,8 @@ def main(args):
     with torch.no_grad():
         basis.weight.data = F.normalize(basis.weight.data, dim=0)
     optim = torch.optim.Adam([{'params': basis.weight, "lr": args.lr}])
+    if args.dropout > 0:
+        dropout = nn.Dropout(p=args.dropout)
     
     step_cnt = 0
     for e in range(args.epoch):
@@ -90,6 +92,8 @@ def main(args):
                 vis_dict['fista_niter'] = n_iter
                 vis_dict['alpha'] = alpha
             t1 = time.time()
+            if args.dropout > 0:
+                z = dropout(z)
             pred = basis(z)
             t2 = time.time()
             loss = ((img_batch - pred) ** 2).sum()
@@ -168,6 +172,6 @@ if __name__ == "__main__":
     parser.add_argument('--alpha_initial', type=float, default=0.001, help='initial alpha value')
     parser.add_argument('--alpha_final', type=float, default=0.05, help='final alpha value')
     parser.add_argument('--alpha_constant_steps', type=int, default=150, help='# steps to keep alpha constant')
-
+    parser.add_argument('--dropout', default=0.01, type=float, help="dropout rate, <=0 to disable")
 
     main(parser.parse_args())
