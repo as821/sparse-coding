@@ -4,12 +4,26 @@ import torch
 from time import time
 
 
+def _get_fista_path():
+    if not torch.cuda.is_available():
+        return "src/c/bin/fista.so"
+
+    prop = torch.cuda.get_device_properties(0)
+    assert prop.major == 8, "Only Ada and Ampere GPUs are supported."
+    if prop.minor == 9:
+        return "src/c/bin/cu_fista_89.so"
+    elif prop.minor == 6:
+        return "src/c/bin/cu_fista_86.so"
+    else:
+        raise NotImplementedError
+
+
 def c_impl_available():
-    return os.path.exists("src/c/bin/fista.so")
+    return os.path.exists(_get_fista_path())
 
 def fista(x, basis, alpha, n_iter, converge_thresh=0.01, lr=0.01):
-    assert os.path.exists("src/c/bin/fista.so")
-    lib = ctypes.CDLL("src/c/bin/fista.so")
+    assert os.path.exists(_get_fista_path())
+    lib = ctypes.CDLL(_get_fista_path())
     lib.fista.argtypes = [
         ctypes.POINTER(ctypes.c_float), 
         ctypes.POINTER(ctypes.c_float), 
@@ -40,8 +54,8 @@ def fista(x, basis, alpha, n_iter, converge_thresh=0.01, lr=0.01):
 
 
 def cu_fista(x, basis, alpha, n_iter, converge_thresh=0.01, lr=0.01):
-    assert os.path.exists("src/c/bin/cu_fista.so")
-    lib = ctypes.CDLL("src/c/bin/cu_fista.so")
+    assert os.path.exists(_get_fista_path())
+    lib = ctypes.CDLL(_get_fista_path())
     lib.fista.argtypes = [
         ctypes.POINTER(ctypes.c_float), 
         ctypes.POINTER(ctypes.c_float), 
