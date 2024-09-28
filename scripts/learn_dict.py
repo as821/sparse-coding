@@ -34,6 +34,21 @@ def get_alpha(step, args, dataloader):
         progress = (step - args.alpha_constant_steps) / (args.epoch * len(dataloader) - args.alpha_constant_steps)
         return args.alpha_initial + (args.alpha_final - args.alpha_initial) * progress
 
+def restart_dead_dict_el(args, basis, z, hist):
+    curr_inactive = (z != 0).to(int).sum(dim=0) == 0
+    if hist is not None:
+        # currently inactive and previously inactive
+        high = 255
+        low = -255
+        need_restart = torch.logical_and(curr_inactive, hist)
+        n_restart = need_restart.sum().item()
+        if n_restart > 0:
+            # NOTE: caller needs to normalize for us. Do not clear curr_inactive for these restarted elements since 
+            # want to restart again in case they still have no activations
+            basis[:, need_restart] = torch.rand_like(basis[:, need_restart]) * (high - low) + low
+            print(f"Restarted {n_restart} dict. elements")
+    return basis, curr_inactive
+
 def main(args):
     timestamp = time.time()
     if args.ckpt_path != "":
@@ -66,6 +81,7 @@ def main(args):
         dropout = nn.Dropout(p=args.dropout)
     
     step_cnt = 0
+    history = None
     for e in range(args.epoch):
         vis_dict = {}
         running_loss = 0
@@ -104,9 +120,11 @@ def main(args):
             optim.step()
             basis.zero_grad()
             t4 = time.time()
-
-
+            
             with torch.no_grad():
+                if args.restart_freq > 0 and step_cnt % args.restart_freq == 0 and step_cnt > 1:
+                    basis.weight.data, history = restart_dead_dict_el(args, basis.weight.data, z, history)
+
                 basis.weight.data = F.normalize(basis.weight.data, dim=0)
 
             # print(f"{t1 - s} {t2 - t1} {t3 - t2} {t4 - t3}")
@@ -168,10 +186,11 @@ if __name__ == "__main__":
     parser.add_argument('--batch_sz', default=2048, type=int, help="batch size")
     parser.add_argument('--init_unif', default=0, type=float, help="uniform initialization range")
 
-    parser.add_argument('--alpha', default=-1, type=float, help="constant alpha parameter for FISTA, -1 to use scheduled alpha instead")
+    parser.add_argument('--alpha', default=0.0005, type=float, help="constant alpha parameter for FISTA, -1 to use scheduled alpha instead")
     parser.add_argument('--alpha_initial', type=float, default=0.001, help='initial alpha value')
     parser.add_argument('--alpha_final', type=float, default=0.05, help='final alpha value')
     parser.add_argument('--alpha_constant_steps', type=int, default=150, help='# steps to keep alpha constant')
     parser.add_argument('--dropout', default=0, type=float, help="dropout rate, <=0 to disable")
+    parser.add_argument('--restart_freq', type=int, default=0, help='frequency at which to check for dead dictionary elements')
 
     main(parser.parse_args())
