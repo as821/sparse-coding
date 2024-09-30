@@ -160,7 +160,7 @@ def main(args):
                 wandb.log(vis_dict, step=step_cnt)
                 
 
-        if e % 10 == 9 and args.ckpt_path != "":
+        if e % 1 == 0 and args.ckpt_path != "":
             torch.save(basis, args.ckpt_path + f"/{timestamp}/ckpt_{e}.pt")
     
     if args.ckpt_path != "":

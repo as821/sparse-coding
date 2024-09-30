@@ -53,9 +53,9 @@ def fista(x, basis, alpha, n_iter, converge_thresh=0.01, lr=0.01):
     return z, n_iter, end - start
 
 
-def cu_fista(x, basis, alpha, n_iter, converge_thresh=0.01, lr=0.01):
-    assert os.path.exists(_get_fista_path())
-    lib = ctypes.CDLL(_get_fista_path())
+def cu_fista(x, basis, alpha, n_iter, converge_thresh=0.01, lr=0.01, path=_get_fista_path()):
+    assert os.path.exists(path), f"{path}"
+    lib = ctypes.CDLL(path)
     lib.fista.argtypes = [
         ctypes.POINTER(ctypes.c_float), 
         ctypes.POINTER(ctypes.c_float), 
