@@ -21,7 +21,7 @@ sys.path.append(os.path.join(os.getcwd(), 'src/c'))
 
 
 from dataset import NatPatchDataset, CIFAR10RandomPatch
-from cinterface import cu_fista, fista, c_impl_available
+from cinterface import multi_gpu_cu_fista, fista, c_impl_available
 from baseline import FISTA
 from plot import plot_color, plot_patch_recon
 
@@ -93,7 +93,7 @@ def main(args):
                 alpha = get_alpha(step_cnt, args, dataloader)
                 step_cnt += 1
                 if c_impl_available():
-                    z, n_iter, _ = cu_fista(img_batch, basis.weight, alpha, fista_max_iter, args.fista_conv, args.fista_lr)
+                    z, n_iter, _ = multi_gpu_cu_fista(img_batch, basis.weight, alpha, fista_max_iter, args.fista_conv, args.fista_lr)
                 
                     if args.cuda_profile:
                         sys.exit(1)
