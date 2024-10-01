@@ -294,8 +294,9 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
     CHECK(basis_host);
     CHECK(Z_host);
 
-    struct timeval actual_start, handle_time, init, exec;
-    gettimeofday(&actual_start, NULL);
+    struct timeval actual_start, handle_time, init, exec, result;
+    if(DEBUG)
+        gettimeofday(&actual_start, NULL);
 
 
     // X: n_samples x inp_dim
@@ -306,7 +307,8 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
     cublasHandle_t handle;
     cublasCreate(&handle);
 
-    gettimeofday(&handle_time, NULL);
+    if(DEBUG)
+        gettimeofday(&handle_time, NULL);
 
     // test_fista shows minor max difference (1e-4) from the reference solution when this option is enabled, but it doubles the performance of the BLAS section
     cublasComputeType_t compute_type = CUBLAS_COMPUTE_32F_FAST_TF32;
@@ -338,7 +340,8 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
     size_t norm_sz = 2 * sizeof(float);
     CHECK_CUDA_NORET(cudaMalloc((void**)&norms, norm_sz))
 
-    gettimeofday(&init, NULL);
+    if(DEBUG)
+        gettimeofday(&init, NULL);
 
     float tk = 1, tk_prev = 1;
     int itr;
@@ -423,7 +426,10 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
         if(itr != 0 && norm_ratio < converge_thresh)
             break;
     }
-    // printf("\n");
+    if(DEBUG) {
+        printf("\n");
+        gettimeofday(&exec, NULL);
+    }
 
     // memcpy(Z, z_prev, dict_sz * n_samples * sizeof(float));
     CHECK_CUDA_NORET(cudaMemcpy((void*)Z_host, z_prev, z_sz, cudaMemcpyDeviceToHost))
@@ -438,13 +444,13 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
 
     cublasDestroy(handle);
 
-
-    gettimeofday(&exec, NULL);
-
-
-    // log_time_diff("\n\n\thandle", &actual_start, &handle_time);
-    // log_time_diff("\tinit", &handle_time, &init);
-    // log_time_diff("\texec", &init, &exec);
+    if(DEBUG) {
+        gettimeofday(&result, NULL);
+        log_time_diff("\n\n\thandle", &actual_start, &handle_time);
+        log_time_diff("\tinit", &handle_time, &init);
+        log_time_diff("\texec", &init, &exec);
+        log_time_diff("\tresult", &exec, &result);
+    }
     return itr;
 }
 }
