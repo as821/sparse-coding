@@ -289,7 +289,7 @@ void log_time_diff(char* msg, struct timeval* start, struct timeval* stop) {
 
 
 extern "C" {
-int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __restrict__ Z_host, int n_samples, int inp_dim, int dict_sz, float lr, float alpha_L, int n_iter, float converge_thresh) {
+int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __restrict__ Z_host, int n_samples, int inp_dim, int dict_sz, float lr, float alpha_L, int n_iter, float converge_thresh, int gpu_idx) {
     CHECK(X_host);
     CHECK(basis_host);
     CHECK(Z_host);
@@ -297,6 +297,7 @@ int fista(float* __restrict__ X_host, float* __restrict__ basis_host, float* __r
     struct timeval actual_start, handle_time, init, exec;
     gettimeofday(&actual_start, NULL);
 
+    CHECK_CUDA_NORET(cudaSetDevice(gpu_idx));
 
     // X: n_samples x inp_dim
     // basis: inp_dim x dict_sz
