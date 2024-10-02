@@ -237,7 +237,7 @@ int fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__ 
         }
 
         float diff_norm = horizontal_add(avx_diff_norm);
-        float prev_z_norm = horizontal_add(avx_diff_norm);
+        float prev_z_norm = horizontal_add(avx_prev_z_norm);
 
         // torch.norm(z_diff) / torch.norm(prev_z) < converge_thresh
         // Frobenius norm can be defined as the L2 norm of the flatttened matrix

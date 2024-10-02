@@ -27,7 +27,7 @@ def main(args):
 
     lr = 0.01
     alpha = 0.01
-    niter = 10000
+    niter = 100
     thresh = 0.01
     
     n_test = 1
