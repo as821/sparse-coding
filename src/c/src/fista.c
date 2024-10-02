@@ -191,40 +191,60 @@ int fista(float* __restrict__ X, float* __restrict__ basis, float* __restrict__ 
 
 
 
+        // thresholding
+        __m256 zero_vec = _mm256_set1_ps(0);
+        __m256 alpha_L_vec = _mm256_set1_ps(alpha_L);
+
         // Y-update multiplier
         tk_prev = tk;
         tk = (1 + sqrtf(1 + 4 * tk * tk)) / 2;
         float mlt = (tk_prev - 1) / tk;
+        __m256 tk_mult = _mm256_set1_ps(mlt);
 
-        float diff_norm = 0;
-        float prev_z_norm = 0;
-        for(int row_idx = 0; row_idx < n_samples; row_idx++) {
-            for(int col_idx = 0; col_idx < dict_sz; col_idx++) {
-                int idx = row_idx * dict_sz + col_idx;
+        // calculate difference in Z due to this step, calculate norm of the difference and prev. Z, update z_prev 
+        __m256 avx_diff_norm = _mm256_set1_ps(0);
+        __m256 avx_prev_z_norm = _mm256_set1_ps(0);
+        for(int row_idx = 0; row_idx < dict_sz; row_idx++) {             // TODO(as) make sure static scheduling == assigning threads a contiguous block...
+            int row_offset = row_idx * n_samples;
+            for(int col_idx = 0; col_idx < n_samples; col_idx += 8) {
+                int idx = row_offset + col_idx;
+
+                // apply thresholding to the BLAS output
+                // Y[idx] = Y[idx] < alpha_L ? 0 : Y[idx] - alpha_L;
+                __m256 blas_res_1 = _mm256_load_ps(Y + idx);
+                __m256 sub_vec = _mm256_sub_ps(blas_res_1, alpha_L_vec);
+                __m256 mask_1 = _mm256_cmp_ps(zero_vec, sub_vec, _CMP_LT_OS);       // A < B (ordered, signalling)
+                __m256 Y_val1 = _mm256_blendv_ps(zero_vec, sub_vec, mask_1);        // if mask, then B
+
+                // float diff = Y[idx] - z_prev[idx];
+                __m256 diff1 = _mm256_sub_ps(Y_val1, _mm256_load_ps(z_prev + idx));
                 
-                // apply thresholding
-                Y[idx] = Y[idx] < alpha_L ? 0 : Y[idx] - alpha_L;
+                // y_slc = z_slc + ((tk_prev - 1) / tk) * z_diff
+                __m256 Y_next = _mm256_fmadd_ps(tk_mult, diff1, Y_val1);
 
-                float diff = Y[idx] - z_prev[idx];
-                diff_norm += diff * diff;
+                // copy Z value out of Y before it gets updated
+                // non-temporal store, should bypass cache hierarchy since never accessed again
+                _mm256_stream_ps(z_prev + idx, Y_val1);
+                _mm256_stream_ps(Y + idx, Y_next);
+
+                // diff_norm += diff * diff;
+                avx_diff_norm = _mm256_fmadd_ps(diff1, diff1, avx_diff_norm);        // a * b + c
                 
-                prev_z_norm += z_prev[idx] * z_prev[idx];
-                z_prev[idx] = Y[idx];
-
-                Y[idx] += mlt * diff;
+                // Actually the norm of the current Y values, to be used in the next iteration
+                // prev_z_norm += z_prev[idx] * z_prev[idx];
+                avx_prev_z_norm = _mm256_fmadd_ps(Y_val1, Y_val1, avx_prev_z_norm);
             }
         }
 
-        // Frobenius norm can be defined as the L2 norm of the flattened matrix
+        float diff_norm = horizontal_add(avx_diff_norm);
+        float prev_z_norm = horizontal_add(avx_diff_norm);
+
+        // torch.norm(z_diff) / torch.norm(prev_z) < converge_thresh
+        // Frobenius norm can be defined as the L2 norm of the flatttened matrix
         float norm_ratio = diff_norm / prev_z_norm;
         norm_ratio = sqrtf(norm_ratio);         // equivalent to sqrtf(diff_norm) / sqrtf(prev_z_norm)
 
-
-        // printf("%d: %f %f\n", itr, sqrtf(diff_norm), sqrtf(prev_z_norm));
-
-
-
-
+        prev_z_norm = horizontal_add(avx_prev_z_norm);
         gettimeofday(&diff, NULL);
 
         if(DEBUG) {

@@ -6,8 +6,8 @@ import math
 from time import time
 
 
-def _get_fista_path(idx=0):
-    if not torch.cuda.is_available():
+def _get_fista_path(idx=0, use_cpu=False):
+    if not torch.cuda.is_available() or use_cpu:
         return "src/c/bin/fista.so"
 
     prop = torch.cuda.get_device_properties(idx)
@@ -24,8 +24,8 @@ def c_impl_available():
     return os.path.exists(_get_fista_path())
 
 def fista(x, basis, alpha, n_iter, converge_thresh=0.01, lr=0.01):
-    assert os.path.exists(_get_fista_path())
-    lib = ctypes.CDLL(_get_fista_path())
+    assert os.path.exists(_get_fista_path(use_cpu=True))
+    lib = ctypes.CDLL(_get_fista_path(use_cpu=True))
     lib.fista.argtypes = [
         ctypes.POINTER(ctypes.c_float), 
         ctypes.POINTER(ctypes.c_float), 

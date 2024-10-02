@@ -33,11 +33,14 @@ def main(args):
     n_test = 1
     res = np.zeros(shape=(n_test,))
     for idx in range(n_test):
-        c_res, n_iter, T = cu_fista(x, basis, alpha, niter, thresh, lr)
-        res[idx] = T
-        print("\n\n")
-    # fista(x, basis, alpha, niter, thresh, lr)
-    # print("\n\n")
+        if args.use_cpu:
+            c_res, n_iter, T = fista(x, basis, alpha, niter, thresh, lr)
+            res[idx] = T
+            print("\n\n")
+        else:
+            c_res, n_iter, T = cu_fista(x, basis, alpha, niter, thresh, lr)
+            res[idx] = T
+            print("\n\n")
 
 
     print(f"\n\nFINAL: {res.sum():.4f} ({res.mean():.4f} {res.std():.4f} {res.max():.4f} {res.min():.4f})")
@@ -56,6 +59,7 @@ if __name__ == "__main__":
     parser.add_argument('--nsamples', default=20000, type=int, help="batch size")
     parser.add_argument('--dict_sz', default=128, type=int, help="dictionary size")
     parser.add_argument('--comparison', action="store_true", help="check correctness of C implementation")
+    parser.add_argument("--use_cpu", action="store_true", help="use CPU implementation")
 
     main(parser.parse_args())
 
