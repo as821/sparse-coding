@@ -16,7 +16,7 @@ mkdir src/c/bin
 ./src/c/build.sh 
 ```
 
-Small sanity check against baseline Python implementation on original Olhausen and Field (1997) dataset:
+Small sanity check against baseline Python implementation on original Olshausen and Field (1996) dataset:
 
 https://www.rctn.org/bruno/sparsenet/
 
