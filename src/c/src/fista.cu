@@ -13,6 +13,11 @@
 
 #define DEBUG false
 
+// https://www.ceremade.dauphine.fr/~carlier/FISTA
+// http://robotics.stanford.edu/~ang/papers/icml09-LargeScaleUnsupervisedDeepLearningGPU.pdf
+// https://proceedings.neurips.cc/paper_files/paper/2006/file/2d71b2ae158c7c5912cc0bbde2bb9d95-Paper.pdf
+// https://github.com/NVIDIA/cuda-samples/blob/master/Samples/3_CUDA_Features/cudaCompressibleMemory/compMalloc.cpp
+
 void print_stack_trace();
 #define CHECK(x)                                                                                    \
 {                                                                                                   \
@@ -42,8 +47,6 @@ void print_stack_trace();
         exit(EXIT_FAILURE);                                                     \
     }                                                                           \
 }
-
-
 
 
 cudaError_t setProp(CUmemAllocationProp *prop, bool UseCompressibleMemory)
