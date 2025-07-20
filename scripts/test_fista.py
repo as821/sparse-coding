@@ -10,7 +10,7 @@ sys.path.append(os.path.join(os.getcwd(), 'src/c'))
 
 from dataset import NatPatchDataset
 from baseline import FISTA
-from cinterface import fista, cu_fista
+from cinterface import fista, cu_fista, tt_fista
 
 
 def main(args):
@@ -35,12 +35,12 @@ def main(args):
     for idx in range(n_test):
         if args.use_cpu:
             c_res, n_iter, T = fista(x, basis, alpha, niter, thresh, lr)
-            res[idx] = T
-            print("\n\n")
+        elif args.tt:
+            c_res, n_iter, T = tt_fista(x, basis, alpha, niter, thresh, lr)
         else:
             c_res, n_iter, T = cu_fista(x, basis, alpha, niter, thresh, lr)
-            res[idx] = T
-            print("\n\n")
+        res[idx] = T
+        print("\n\n")
 
 
     print(f"\n\nFINAL: {res.sum():.4f} ({res.mean():.4f} {res.std():.4f} {res.max():.4f} {res.min():.4f})")
@@ -60,6 +60,7 @@ if __name__ == "__main__":
     parser.add_argument('--dict_sz', default=128, type=int, help="dictionary size")
     parser.add_argument('--comparison', action="store_true", help="check correctness of C implementation")
     parser.add_argument("--use_cpu", action="store_true", help="use CPU implementation")
+    parser.add_argument("--tt", action="store_true", help="use Tenstorrent implementation")
 
     main(parser.parse_args())
 

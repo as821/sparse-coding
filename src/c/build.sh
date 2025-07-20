@@ -27,7 +27,8 @@ nvcc -shared -g -lcublas -lcuda -Xptxas="-v" -Xptxas="-dlcm=cg" -lineinfo -std=c
 
 # god what a fucking mess
 clang-17 -fPIC -std=c++23 -DSPDLOG_FMT_EXTERNAL -Wno-deprecated-declarations -Wno-c++11-narrowing -I${TT_METAL_HOME}/build_Release/include/ -I${TT_METAL_HOME}/tt_metal/third_party/ -I${TT_METAL_HOME}/build_Release/include/metalium-thirdparty -I/usr/include -I/home/astange/boost/lib/core/include $GCC_OPTIONS src/c/bin/tt_fista.o src/c/src/tt/fista.cpp
-clang-17 -shared -g -L"$TT_METAL_HOME/build/tt_metal" $OPTIM_OPTIONS -o src/c/bin/tt_fista.so src/c/bin/tt_fista.o
+clang-17 -shared -g -L"$TT_METAL_HOME/build/tt_metal" -L"$TT_METAL_HOME/build_Release/lib/" $OPTIM_OPTIONS -o src/c/bin/tt_fista.so src/c/bin/tt_fista.o -ltt_metal -lfmt -lstdc++ -lpthread
+export LD_LIBRARY_PATH=${TT_METAL_HOME}/build_Release/lib:$LD_LIBRARY_PATH
 
 rm -f src/c/bin/*.o
 rm -rf src/c/bin/*.dSYM
