@@ -25,10 +25,10 @@ def main(args):
     basis = basis / (basis.norm(2,0) + 1e-10)
 
 
-    lr = 0.01
+    lr = 0.1
     alpha = 0.01
-    niter = 100
-    thresh = 0.01
+    niter = 1000
+    thresh = 0.001
     
     n_test = 1
     res = np.zeros(shape=(n_test,))

@@ -25,10 +25,9 @@ nvcc -shared -g -lcublas -lcuda -Xptxas="-v" -Xptxas="-dlcm=cg" -lineinfo -std=c
 AMPERE_OPTIONS="-O3 -arch=sm_86 -gencode=arch=compute_86,code=sm_86 -gencode=arch=compute_86,code=compute_86"
 nvcc -shared -g -lcublas -lcuda -Xptxas="-v" -Xptxas="-dlcm=cg" -lineinfo -std=c++17 $AMPERE_OPTIONS -o src/c/bin/cu_fista_86.so src/c/src/fista.cu -Xcompiler="-fPIC $OPTIM_OPTIONS" -diag-suppress 2464
 
-# TODO: all the examples just use CMake 
-TT_INCLUDE=${TT_METAL_HOME} ${TT_METAL_HOME}/tt_metal ${TT_METAL_HOME}/tt_metal/api/ ${TT_METAL_HOME}/tt_metal/include ${TT_METAL_HOME}/tt_metal/hostdevcommon/api ${TT_METAL_HOME}/tt_metal/third_party/umd ${TT_METAL_HOME}/tt_metal/third_party/umd/device ${TT_METAL_HOME}/tt_metal/third_party/umd/device/api/ ${TT_METAL_HOME}/tt_metal/third_party/tracy/public/ ${TT_METAL_HOME}/tt_metal/hw/inc/ ${TT_METAL_HOME}/tt_stl/"
-gcc -fPIC -I"$TT_INCLUDE" $GCC_OPTIONS src/c/bin/tt_fista.o src/c/src/tt/fista.c
-gcc -shared -g -L"$TT_METAL_HOME/build/tt_metal" $OPTIM_OPTIONS -o src/c/bin/tt_fista.so src/c/bin/tt_fista.o
+# god what a fucking mess
+clang-17 -fPIC -std=c++23 -DSPDLOG_FMT_EXTERNAL -Wno-deprecated-declarations -Wno-c++11-narrowing -I${TT_METAL_HOME}/build_Release/include/ -I${TT_METAL_HOME}/tt_metal/third_party/ -I${TT_METAL_HOME}/build_Release/include/metalium-thirdparty -I/usr/include -I/home/astange/boost/lib/core/include $GCC_OPTIONS src/c/bin/tt_fista.o src/c/src/tt/fista.cpp
+clang-17 -shared -g -L"$TT_METAL_HOME/build/tt_metal" $OPTIM_OPTIONS -o src/c/bin/tt_fista.so src/c/bin/tt_fista.o
 
 rm -f src/c/bin/*.o
 rm -rf src/c/bin/*.dSYM

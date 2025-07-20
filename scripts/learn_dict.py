@@ -61,7 +61,7 @@ def main(args):
 
 
     device = torch.device("cuda" if torch.cuda.is_available() and not c_impl_available() else "cpu")
-    fista_max_iter = 10000
+    fista_max_iter = 5000
     
     basis_shape = args.patch_sz ** 2
     if args.dataset == "nat":
@@ -105,6 +105,7 @@ def main(args):
                     # assert np.all(np.abs(z_gt.cpu().numpy() - z.numpy()) < 0.1), f"{np.abs(z_gt.cpu().numpy() - z.numpy()).max()} >= 0.1"
                 else:
                     z, n_iter = FISTA(img_batch, basis.weight, alpha, fista_max_iter, args.fista_conv, device, lr=args.fista_lr)
+                # print(n_iter)
                 vis_dict['fista_niter'] = n_iter
                 vis_dict['alpha'] = alpha
             t1 = time.time()
