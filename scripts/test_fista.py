@@ -54,7 +54,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--path', default="/Users/andrewstange/Desktop/research/sparse-coding/data/IMAGES.mat", type=str, help="dataset path")
+    parser.add_argument('--path', default="data/IMAGES.mat", type=str, help="dataset path")
     parser.add_argument('--patch_sz', default=10, type=int, help="patch size")
     parser.add_argument('--nsamples', default=20000, type=int, help="batch size")
     parser.add_argument('--dict_sz', default=128, type=int, help="dictionary size")
